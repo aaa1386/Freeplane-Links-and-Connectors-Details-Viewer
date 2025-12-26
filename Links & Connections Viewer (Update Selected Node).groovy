@@ -1,4 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
+// aj1386
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -238,3 +239,4 @@ try {
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
+
