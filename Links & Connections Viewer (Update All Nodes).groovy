@@ -1,11 +1,13 @@
-// @ExecutionModes({ON_SINGLE_NODE="/menu_bar/links"})
+// @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
+
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
 
-// ================= بررسی وجود URI =================
+// ================= چک کردن وجود URI =================
 def hasURI(node) {
-    extractPlainTextFromNode(node).split('\n').any { it.trim().startsWith("freeplane:") }
+    def text = node.text ?: ""
+    return text.contains("#") || text.contains("freeplane:") || text =~ /https?:\/\//
 }
 
 // ================= دیالوگ =================
@@ -41,7 +43,9 @@ def extractPlainTextFromNode(node) {
 
 def getFirstLineFromText(text) {
     if (!text) return "لینک"
-    text.split('\n').find { it.trim() && !it.startsWith("freeplane:") }?.trim() ?: "لینک"
+    text.split('\n').find {
+        it.trim() && !it.startsWith("freeplane:")
+    }?.trim() ?: "لینک"
 }
 
 // ================= تبدیل NodeModel → NodeProxy =================
@@ -53,17 +57,24 @@ def asProxy(n) {
 // ================= استخراج کانکتورها =================
 def extractConnectedNodes(node) {
     node = asProxy(node)
-    if (!node) return ['ورودی': [], 'خروجی': [], 'دوطرفه': []]
+    if (!node) return ['ورودی':[], 'خروجی':[], 'دوطرفه':[]]
 
     def map = [:]
-    node.connectorsIn.each { map[it.source.delegate] = (map[it.source.delegate] ?: []) + "ورودی" }
-    node.connectorsOut.each { map[it.target.delegate] = (map[it.target.delegate] ?: []) + "خروجی" }
+    node.connectorsIn.each {
+        map[it.source.delegate] = (map[it.source.delegate] ?: []) + "ورودی"
+    }
+    node.connectorsOut.each {
+        map[it.target.delegate] = (map[it.target.delegate] ?: []) + "خروجی"
+    }
 
     def grouped = ['ورودی': [], 'خروجی': [], 'دوطرفه': []]
     map.each { n, types ->
-        if (types.contains("ورودی") && types.contains("خروجی")) grouped['دوطرفه'] << n
-        else if (types.contains("ورودی")) grouped['ورودی'] << n
-        else if (types.contains("خروجی")) grouped['خروجی'] << n
+        if (types.contains("ورودی") && types.contains("خروجی"))
+            grouped['دوطرفه'] << n
+        else if (types.contains("ورودی"))
+            grouped['ورودی'] << n
+        else if (types.contains("خروجی"))
+            grouped['خروجی'] << n
     }
     grouped
 }
@@ -71,10 +82,12 @@ def extractConnectedNodes(node) {
 // ================= HTML کانکتورها =================
 def generateConnectorsHTML(grouped) {
     def html = []
-
+    
     def makeLink = { n ->
         "<a data-link-type='connector' href='#${n.id}'>" +
-        HtmlUtils.toXMLEscapedText(getFirstLineFromText(extractPlainTextFromNode(n))) +
+        HtmlUtils.toXMLEscapedText(
+            getFirstLineFromText(extractPlainTextFromNode(n))
+        ) +
         "</a>"
     }
 
@@ -82,15 +95,15 @@ def generateConnectorsHTML(grouped) {
         def nodes = grouped[type]
         if (nodes && !nodes.isEmpty()) {
             html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>گره‌های ${type}:</div>"
-            nodes.eachWithIndex { n,i ->
-                html << "<div style='margin-right:15px;margin-bottom:3px;text-align:right;direction:rtl;'>${i+1}. ${makeLink(n)}</div>"
+            nodes.eachWithIndex { n, i ->
+                html << "<div style='margin-right:15px;text-align:right;direction:rtl;'>${i+1}. ${makeLink(n)}</div>"
             }
         }
     }
     html.join("")
 }
 
-// ================= لینک‌های متنی =================
+// ================= لینک‌های متنی از Details =================
 def extractTextLinksFromDetails(node) {
     def list = []
     def h = node.detailsText
@@ -101,14 +114,14 @@ def extractTextLinksFromDetails(node) {
     list
 }
 
-// ================= استخراج لینک‌ها از متن گره (یو آر آی حذف می‌شود) =================
+// ================= استخراج URI از متن گره + پاکسازی =================
 def extractTextLinksFromNodeText(node) {
     def links = []
     def keepLines = []
 
     extractPlainTextFromNode(node).split('\n').each { l ->
         def t = l.trim()
-        if (t.startsWith("freeplane:")) {
+        if (t.startsWith("freeplane:") || t.contains("#") || t =~ /https?:\/\//) {
             def parts = t.split(' ', 2)
             def uri = parts[0]
             def title = null
@@ -117,10 +130,8 @@ def extractTextLinksFromNodeText(node) {
                 def targetId = uri.substring(uri.lastIndexOf('#')+1)
                 def targetNode = c.find { it.id == targetId }.find()
                 if (targetNode) {
-                    // ✅ اگر گره مقصد داخل همین نقشه است → عنوان گره مقصد
                     title = getFirstLineFromText(extractPlainTextFromNode(targetNode))
                 } else {
-                    // 🔹 اگر گره در نقشه دیگر است
                     title = (parts.length > 1) ? parts[1].trim() : "عنوان را از نقشه دیگر جایگزین کن"
                 }
             } else {
@@ -132,6 +143,7 @@ def extractTextLinksFromNodeText(node) {
             keepLines << t
         }
     }
+    // URI ها حذف و متن پاکسازی شده ذخیره می‌شود
     node.text = keepLines.join("\n")
     links
 }
@@ -139,29 +151,30 @@ def extractTextLinksFromNodeText(node) {
 // ================= ذخیره Details =================
 def saveDetails(node, textLinks, connectors) {
     def html = []
+    def hasContent = false
     
     if (textLinks && !textLinks.isEmpty()) {
         html << "<div style='font-weight:bold;text-align:right;'>لینک‌ها:</div>"
-        textLinks.eachWithIndex { l,i ->
+        textLinks.eachWithIndex { l, i ->
             html << "<div style='margin-right:15px;text-align:right;'>${i+1}. " +
                     "<a data-link-type='text' href='${l.uri}'>" +
                     HtmlUtils.toXMLEscapedText(l.title) +
                     "</a></div>"
         }
         html << "<hr>"
+        hasContent = true
     }
     
     def connectorsHTML = generateConnectorsHTML(connectors)
-    if (connectorsHTML) {
+    if (connectorsHTML.trim()) {
         html << connectorsHTML
+        hasContent = true
     }
     
-    // 🔹 فقط اگر محتوا هست set کن
-    if (html && !html.isEmpty()) {
+    if (hasContent) {
         node.details = "<html><body style='direction:rtl;'>${html.join("")}</body></html>"
         node.detailsContentType = "html"
     } else {
-        // ❌ خالی کن - کادر محو می‌شود
         node.details = null
         node.detailsContentType = null
     }
@@ -170,34 +183,18 @@ def saveDetails(node, textLinks, connectors) {
 // ================= لینک برگشتی متنی =================
 def createBackwardTextLink(targetNode, sourceNode) {
     def sourceUri = "#${sourceNode.id}"
-    def sourceTitle = getFirstLineFromText(extractPlainTextFromNode(sourceNode))
+    def title = getFirstLineFromText(extractPlainTextFromNode(sourceNode))
 
     def textLinks = extractTextLinksFromDetails(targetNode)
-    if (textLinks.any { it.uri == sourceUri }) return
+    if (!textLinks.any { it.uri == sourceUri }) {
+        textLinks << [uri: sourceUri, title: title]
+    }
 
-    textLinks << [uri: sourceUri, title: sourceTitle]
     saveDetails(targetNode, textLinks, extractConnectedNodes(targetNode))
 }
 
-// ================= آپدیت کانکتورهای طرف مقابل =================
-def updateOtherSideConnectors(centerNode) {
-    def connected = extractConnectedNodes(centerNode)
-    connected.values().flatten().unique().each { other ->
-        def proxy = asProxy(other)
-        if (!proxy) return
-        saveDetails(
-            proxy,
-            extractTextLinksFromDetails(proxy),
-            extractConnectedNodes(proxy)
-        )
-    }
-}
-
-// ================= پردازش گره =================
-def processNode(mode) {
-    def node = c.selected
-    if (!node) return
-
+// ================= پردازش تک گره =================
+def processSingleNode(node, mode) {
     def newLinks = extractTextLinksFromNodeText(node)
     def connectors = extractConnectedNodes(node)
     def existingTextLinks = extractTextLinksFromDetails(node)
@@ -205,7 +202,6 @@ def processNode(mode) {
 
     saveDetails(node, finalTextLinks, connectors)
 
-    // دوطرفه → لینک برگشتی
     if (mode == "دو طرفه") {
         newLinks.each { link ->
             if (link.uri.contains("#")) {
@@ -217,24 +213,45 @@ def processNode(mode) {
             }
         }
     }
+}
 
-    // آپدیت کانکتورهای طرف مقابل
-    updateOtherSideConnectors(node)
+// ================= آپدیت کانکتورها در سراسر نقشه =================
+def updateAllConnectors(mode) {
+    def node = c.selected
+    if (!node) return
+    
+    processSingleNode(node, mode)
+    
+    def allNodes = c.find { true }
+    allNodes.each { n ->
+        def proxyNode = asProxy(n)
+        if (!proxyNode) return
+        
+        def connectors = extractConnectedNodes(proxyNode)
+        def textLinks = extractTextLinksFromDetails(proxyNode)
+        saveDetails(proxyNode, textLinks, connectors)
+    }
 }
 
 // ================= اجرا =================
 try {
     def node = c.selected
-    if (!node || !hasURI(node)) {
-        // اگر URI ندارد → مستقیم اجرا با حالت یک طرفه
-        processNode("یک طرفه")
+    if (!node) return
+    
+    // ✅ فقط اگر URI در گره انتخابی باشد → دیالوگ
+    def hasUri = hasURI(node)
+    
+    def mode
+    if (hasUri) {
+        mode = showSimpleDialog()
     } else {
-        // اگر URI دارد → نمایش دیالوگ
-        def mode = showSimpleDialog()
-        if (mode) {
-            processNode(mode)
-        }
+        mode = "یک طرفه"  // مستقیم اجرا بدون دیالوگ
     }
+    
+    if (!mode) return
+    
+    updateAllConnectors(mode)
+    
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
