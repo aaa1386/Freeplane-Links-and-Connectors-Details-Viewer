@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386
+// aaa1386 - FINAL FIXED VERSION
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -54,35 +54,86 @@ def asProxy(n) {
         c.find { it.delegate == n }.find()
 }
 
-// ================= Extract connectors =================
+// ================= Extract connectors (اصلاح جهت) =================
 def extractConnectedNodes(node) {
     node = asProxy(node)
     if (!node) return ['Input':[], 'Output':[], 'Bidirectional':[]]
 
-    def map = [:]
-    node.connectorsIn.each {
-        map[it.source.delegate] = (map[it.source.delegate] ?: []) + "Input"
-    }
-    node.connectorsOut.each {
-        map[it.target.delegate] = (map[it.target.delegate] ?: []) + "Output"
+    def nodeId = node.id
+    def grouped = ['Input': [], 'Output': [], 'Bidirectional': []]
+
+    def allConnectors = (node.connectorsIn + node.connectorsOut).unique()
+
+    allConnectors.each { con ->
+        def src = con.source?.delegate
+        def tgt = con.target?.delegate
+        if (!src || !tgt) return
+
+        def srcId = src.id
+        def tgtId = tgt.id
+        
+        def otherNode
+        def nodeIsSource = false
+
+        if (srcId == nodeId) {
+            otherNode = tgt
+            nodeIsSource = true
+        } else if (tgtId == nodeId) {
+            otherNode = src
+        } else {
+            return
+        }
+
+        if (!otherNode) return
+
+        def start = con.hasStartArrow()
+        def end   = con.hasEndArrow()
+
+        if (start && end) {
+            if (!grouped['Bidirectional'].contains(otherNode))
+                grouped['Bidirectional'] << otherNode
+        } 
+        else if (start && !end) {
+            // معکوس: start=true end=false → برعکس عمل کن
+            if (nodeIsSource) {
+                // node → otherNode → ورودی (معکوس)
+                if (!grouped['Input'].contains(otherNode))
+                    grouped['Input'] << otherNode
+            } else {
+                // otherNode → node → خروجی (معکوس)
+                if (!grouped['Output'].contains(otherNode))
+                    grouped['Output'] << otherNode
+            }
+        }
+        else if (!start && end) {
+            // معکوس: !start end=true → برعکس عمل کن
+            if (nodeIsSource) {
+                // otherNode → node → خروجی (معکوس)
+                if (!grouped['Output'].contains(otherNode))
+                    grouped['Output'] << otherNode
+            } else {
+                // node → otherNode → ورودی (معکوس)
+                if (!grouped['Input'].contains(otherNode))
+                    grouped['Input'] << otherNode
+            }
+        }
+        else {
+            // بدون فلش
+            if (nodeIsSource) {
+                grouped['Output'] << otherNode
+            } else {
+                grouped['Input'] << otherNode
+            }
+        }
     }
 
-    def grouped = ['Input': [], 'Output': [], 'Bidirectional': []]
-    map.each { n, types ->
-        if (types.contains("Input") && types.contains("Output"))
-            grouped['Bidirectional'] << n
-        else if (types.contains("Input"))
-            grouped['Input'] << n
-        else if (types.contains("Output"))
-            grouped['Output'] << n
-    }
     grouped
 }
 
 // ================= Connector HTML =================
 def generateConnectorsHTML(grouped) {
     def html = []
-    
+
     def makeLink = { n ->
         "<a data-link-type='connector' href='#${n.id}'>" +
         HtmlUtils.toXMLEscapedText(
@@ -94,7 +145,11 @@ def generateConnectorsHTML(grouped) {
     ['Input','Output','Bidirectional'].each { type ->
         def nodes = grouped[type]
         if (nodes && !nodes.isEmpty()) {
-            html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>${type} nodes:</div>"
+            def label =
+                (type == 'Input') ? 'Input ←' :
+                (type == 'Output') ? 'Output →' :
+                                     'Mutual ↔'
+            html << "<div style='font-weight:bold;margin:5px 0;text-align:left;direction:rtl;'>${label}:</div>"
             nodes.eachWithIndex { n, i ->
                 html << "<div style='margin-right:15px;text-align:right;direction:rtl;'>${i+1}. ${makeLink(n)}</div>"
             }
@@ -102,6 +157,7 @@ def generateConnectorsHTML(grouped) {
     }
     html.join("")
 }
+
 
 // ================= Text links from Details =================
 def extractTextLinksFromDetails(node) {
@@ -140,8 +196,7 @@ def extractTextLinksFromNodeText(node) {
             }
 
             freeplaneLinks << [uri: uri, title: title]
-        } 
-        // ✅ Obsidian URI
+        }
         else if (t.startsWith("obsidian://")) {
             def parts = t.split(' ', 2)
             def uri = parts[0]
@@ -152,7 +207,6 @@ def extractTextLinksFromNodeText(node) {
             keepLines << t
         }
     }
-    // URI ها حذف و متن پاکسازی شده ذخیره می‌شود
     node.text = keepLines.join("\n")
     freeplaneLinks + obsidianLinks
 }
@@ -161,8 +215,7 @@ def extractTextLinksFromNodeText(node) {
 def saveDetails(node, textLinks, connectors) {
     def html = []
     def hasNewCategory = false
-    
-    // ✅ Freeplane grouping
+
     def freeplaneLinks = textLinks.findAll { it.uri.startsWith("freeplane:") || it.uri.startsWith("#") || it.uri =~ /https?:\/\// }
     if (freeplaneLinks && !freeplaneLinks.isEmpty()) {
         html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>🔗 Freeplane links:</div>"
@@ -174,12 +227,11 @@ def saveDetails(node, textLinks, connectors) {
         }
         hasNewCategory = true
     }
-    
-    // ✅ Obsidian grouping (only if Freeplane exists → draw line)
+
     def obsidianLinks = textLinks.findAll { it.uri.startsWith("obsidian://") }
     if (obsidianLinks && !obsidianLinks.isEmpty()) {
         if (hasNewCategory) {
-            html << "<hr>"  // ✅ Line before new category
+            html << "<hr>"
         }
         html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>📱 Obsidian links:</div>"
         obsidianLinks.eachWithIndex { l, i ->
@@ -190,16 +242,15 @@ def saveDetails(node, textLinks, connectors) {
         }
         hasNewCategory = true
     }
-    
+
     def connectorsHTML = generateConnectorsHTML(connectors)
     if (connectorsHTML) {
         if (hasNewCategory) {
-            html << "<hr>"  // ✅ Line before connectors
+            html << "<hr>"
         }
         html << connectorsHTML
     }
-    
-    // 🔹 Set only if content exists
+
     if (html && !html.isEmpty()) {
         node.details = "<html><body style='direction:rtl;'>${html.join("")}</body></html>"
         node.detailsContentType = "html"
@@ -244,26 +295,23 @@ def processSingleNode(node, mode) {
     }
 }
 
-// ================= Full map update (URI + Obsidian all nodes) =================
+// ================= Full map update =================
 def updateAllConnectors(mode) {
     def node = c.selected
     if (!node) return
-    
-    // ✅ First selected node (mode applied)
+
     processSingleNode(node, mode)
-    
-    // ✅ All map nodes → URI + Obsidian extraction + cleanup
+
     def allNodes = c.find { true }
     allNodes.each { n ->
         def proxyNode = asProxy(n)
-        if (!proxyNode || proxyNode == node) return  // Selected node already processed
-        
-        // ✅ For all: URI + Obsidian extraction
+        if (!proxyNode || proxyNode == node) return
+
         def newLinks = extractTextLinksFromNodeText(proxyNode)
         def connectors = extractConnectedNodes(proxyNode)
         def existingTextLinks = extractTextLinksFromDetails(proxyNode)
         def finalTextLinks = (existingTextLinks + newLinks).unique { it.uri }
-        
+
         saveDetails(proxyNode, finalTextLinks, connectors)
     }
 }
@@ -272,21 +320,20 @@ def updateAllConnectors(mode) {
 try {
     def node = c.selected
     if (!node) return
-    
-    // ✅ Dialog only if URI in selected node
+
     def hasUri = hasURI(node)
-    
+
     def mode
     if (hasUri) {
         mode = showSimpleDialog()
     } else {
-        mode = "One-way"  // Execute directly without dialog
+        mode = "One-way"
     }
-    
+
     if (!mode) return
-    
+
     updateAllConnectors(mode)
-    
+
 } catch (e) {
     ui.showMessage("Error:\n${e.message}", 0)
 }
