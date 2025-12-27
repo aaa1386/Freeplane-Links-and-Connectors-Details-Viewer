@@ -116,7 +116,8 @@ def extractTextLinksFromDetails(node) {
 
 // ================= استخراج URI از متن گره + پاکسازی =================
 def extractTextLinksFromNodeText(node) {
-    def links = []
+    def freeplaneLinks = []
+    def obsidianLinks = []
     def keepLines = []
 
     extractPlainTextFromNode(node).split('\n').each { l ->
@@ -138,14 +139,14 @@ def extractTextLinksFromNodeText(node) {
                 title = (parts.length > 1) ? parts[1].trim() : "لینک"
             }
 
-            links << [uri: uri, title: title]
+            freeplaneLinks << [uri: uri, title: title]
         } 
         // ✅ Obsidian URI
         else if (t.startsWith("obsidian://")) {
             def parts = t.split(' ', 2)
             def uri = parts[0]
             def title = (parts.length > 1) ? parts[1].trim() : "ابسیدین"
-            links << [uri: uri, title: title]
+            obsidianLinks << [uri: uri, title: title]
         }
         else if (t) {
             keepLines << t
@@ -153,7 +154,7 @@ def extractTextLinksFromNodeText(node) {
     }
     // URI ها حذف و متن پاکسازی شده ذخیره می‌شود
     node.text = keepLines.join("\n")
-    links
+    freeplaneLinks + obsidianLinks
 }
 
 // ================= ذخیره Details =================
@@ -161,9 +162,25 @@ def saveDetails(node, textLinks, connectors) {
     def html = []
     def hasContent = false
     
-    if (textLinks && !textLinks.isEmpty()) {
-        html << "<div style='font-weight:bold;text-align:right;'>لینک‌ها:</div>"
-        textLinks.eachWithIndex { l, i ->
+    // ✅ گروه‌بندی Freeplane
+    def freeplaneLinks = textLinks.findAll { it.uri.startsWith("freeplane:") || it.uri.startsWith("#") || it.uri =~ /https?:\/\// }
+    if (freeplaneLinks) {
+        html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>🔗 لینک‌های فری‌پلن:</div>"
+        freeplaneLinks.eachWithIndex { l, i ->
+            html << "<div style='margin-right:15px;text-align:right;'>${i+1}. " +
+                    "<a data-link-type='text' href='${l.uri}'>" +
+                    HtmlUtils.toXMLEscapedText(l.title) +
+                    "</a></div>"
+        }
+        html << "<hr>"
+        hasContent = true
+    }
+    
+    // ✅ گروه‌بندی Obsidian
+    def obsidianLinks = textLinks.findAll { it.uri.startsWith("obsidian://") }
+    if (obsidianLinks) {
+        html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>📱 لینک‌های ابسیدین:</div>"
+        obsidianLinks.eachWithIndex { l, i ->
             html << "<div style='margin-right:15px;text-align:right;'>${i+1}. " +
                     "<a data-link-type='text' href='${l.uri}'>" +
                     HtmlUtils.toXMLEscapedText(l.title) +
