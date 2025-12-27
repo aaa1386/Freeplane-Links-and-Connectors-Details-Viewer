@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aj1386 -  ICON ONLY + HR
+// aj1386 -حذف خط
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -214,7 +214,7 @@ def resolveTitleForLink(link) {
     return link.title ?: "لینک"
 }
 
-// ================= ذخیره Details (عنوان حذف + آیکن + خط) =================
+// ================= ذخیره Details (بدون خط جداکننده) =================
 def saveDetails(node, textLinks, connectors) {
     def html = []
 
@@ -228,7 +228,6 @@ def saveDetails(node, textLinks, connectors) {
                     HtmlUtils.toXMLEscapedText(titleNow) +
                     "</a></div>"
         }
-        html << "<hr>"
     }
     
     // Obsidian Links
@@ -241,7 +240,6 @@ def saveDetails(node, textLinks, connectors) {
                     HtmlUtils.toXMLEscapedText(titleNow) +
                     "</a></div>"
         }
-        html << "<hr>"
     }
     
     // Connectors
@@ -258,6 +256,7 @@ def saveDetails(node, textLinks, connectors) {
         node.detailsContentType = null
     }
 }
+
 
 // ================= لینک برگشتی متنی =================
 def createBackwardTextLink(targetNode, sourceNode) {
