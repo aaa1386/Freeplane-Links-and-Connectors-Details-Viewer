@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aj1386 - FIXED null safety
+// aj1386 -  ICON ONLY + HR
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -120,7 +120,7 @@ def extractConnectedNodes(node) {
     grouped
 }
 
-// ================= HTML کانکتورها =================
+// ================= HTML کانکتورها (عنوان حذف + آیکن) =================
 def generateConnectorsHTML(grouped) {
     def html = []
 
@@ -133,15 +133,12 @@ def generateConnectorsHTML(grouped) {
     ['ورودی','خروجی','دوطرفه'].each { type ->
         def nodes = grouped[type]
         if (nodes && !nodes.isEmpty()) {
-
-            def titleLabel =
-                (type == 'ورودی')   ? '↙️ورودی (Input):' :
-                (type == 'خروجی')   ? '↗️خروجی (Output):' :
-                                      '↔️دوطرفه (Mutual):'
-
-            html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>${titleLabel}</div>"
+            def icon = 
+                (type == 'ورودی')   ? '↙️ ' :
+                (type == 'خروجی')   ? '↗️ ' :
+                                       '↔️ '
             nodes.each { n ->
-                html << "<div style='margin-right:0px;margin-bottom:3px;text-align:right;direction:rtl;'>• ${makeLink(n)}</div>"
+                html << "<div style='margin-right:0px;margin-bottom:3px;text-align:right;direction:rtl;'>${icon}${makeLink(n)}</div>"
             }
         }
     }
@@ -217,45 +214,39 @@ def resolveTitleForLink(link) {
     return link.title ?: "لینک"
 }
 
-// ================= ذخیره Details =================
+// ================= ذخیره Details (عنوان حذف + آیکن + خط) =================
 def saveDetails(node, textLinks, connectors) {
     def html = []
-    def hasNewCategory = false
-    
+
+    // Freeplane Links
     def freeplaneLinks = textLinks.findAll { (it.uri ?: "").startsWith("freeplane:") || (it.uri ?: "").startsWith("#") }
     if (freeplaneLinks && !freeplaneLinks.isEmpty()) {
-        html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>🔗 فریپلن(FP):</div>"
         freeplaneLinks.each { l ->
             def titleNow = resolveTitleForLink(l)
-            html << "<div style='margin-right:0px;text-align:right;'>• " +
+            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>🔗 " +
                     "<a data-link-type='text' href='${l.uri ?: ""}'>" +
                     HtmlUtils.toXMLEscapedText(titleNow) +
                     "</a></div>"
         }
-        hasNewCategory = true
+        html << "<hr>"
     }
     
+    // Obsidian Links
     def obsidianLinks = textLinks.findAll { (it.uri ?: "").startsWith("obsidian://") }
     if (obsidianLinks && !obsidianLinks.isEmpty()) {
-        if (hasNewCategory) {
-            html << "<hr>"
-        }
-        html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>📱 ابسیدین(Obsidian):</div>"
         obsidianLinks.each { l ->
             def titleNow = l.title ?: "ابسیدین"
-            html << "<div style='margin-right:0px;text-align:right;'>• " +
+            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>📱 " +
                     "<a data-link-type='text' href='${l.uri ?: ""}'>" +
                     HtmlUtils.toXMLEscapedText(titleNow) +
                     "</a></div>"
         }
-        hasNewCategory = true
+        html << "<hr>"
     }
     
+    // Connectors
     def connectorsHTML = generateConnectorsHTML(connectors)
     if (connectorsHTML) {
-        if (hasNewCategory) {
-            html << "<hr>"
-        }
         html << connectorsHTML
     }
     
