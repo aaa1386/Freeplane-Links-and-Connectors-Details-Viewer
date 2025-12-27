@@ -160,11 +160,11 @@ def extractTextLinksFromNodeText(node) {
 // ================= ذخیره Details =================
 def saveDetails(node, textLinks, connectors) {
     def html = []
-    def hasContent = false
+    def hasNewCategory = false
     
     // ✅ گروه‌بندی Freeplane
     def freeplaneLinks = textLinks.findAll { it.uri.startsWith("freeplane:") || it.uri.startsWith("#") || it.uri =~ /https?:\/\// }
-    if (freeplaneLinks) {
+    if (freeplaneLinks && !freeplaneLinks.isEmpty()) {
         html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>🔗 لینک‌های فری‌پلن:</div>"
         freeplaneLinks.eachWithIndex { l, i ->
             html << "<div style='margin-right:15px;text-align:right;'>${i+1}. " +
@@ -172,13 +172,15 @@ def saveDetails(node, textLinks, connectors) {
                     HtmlUtils.toXMLEscapedText(l.title) +
                     "</a></div>"
         }
-        html << "<hr>"
-        hasContent = true
+        hasNewCategory = true
     }
     
-    // ✅ گروه‌بندی Obsidian
+    // ✅ گروه‌بندی Obsidian (فقط اگر Freeplane بود → خط بکش)
     def obsidianLinks = textLinks.findAll { it.uri.startsWith("obsidian://") }
-    if (obsidianLinks) {
+    if (obsidianLinks && !obsidianLinks.isEmpty()) {
+        if (hasNewCategory) {
+            html << "<hr>"  // ✅ خط قبل دسته جدید
+        }
         html << "<div style='font-weight:bold;margin:5px 0;text-align:right;direction:rtl;'>📱 لینک‌های ابسیدین:</div>"
         obsidianLinks.eachWithIndex { l, i ->
             html << "<div style='margin-right:15px;text-align:right;'>${i+1}. " +
@@ -186,17 +188,19 @@ def saveDetails(node, textLinks, connectors) {
                     HtmlUtils.toXMLEscapedText(l.title) +
                     "</a></div>"
         }
-        html << "<hr>"
-        hasContent = true
+        hasNewCategory = true
     }
     
     def connectorsHTML = generateConnectorsHTML(connectors)
-    if (connectorsHTML.trim()) {
+    if (connectorsHTML) {
+        if (hasNewCategory) {
+            html << "<hr>"  // ✅ خط قبل کانکتورها
+        }
         html << connectorsHTML
-        hasContent = true
     }
     
-    if (hasContent) {
+    // 🔹 فقط اگر محتوا هست set کن
+    if (html && !html.isEmpty()) {
         node.details = "<html><body style='direction:rtl;'>${html.join("")}</body></html>"
         node.detailsContentType = "html"
     } else {
