@@ -44,7 +44,7 @@ def extractPlainTextFromNode(node) {
 def getFirstLineFromText(text) {
     if (!text) return "لینک"
     text.split('\n').find {
-        it.trim() && !it.startsWith("freeplane:")
+        it.trim() && !it.startsWith("freeplane:") && !it.startsWith("obsidian://")
     }?.trim() ?: "لینک"
 }
 
@@ -139,7 +139,15 @@ def extractTextLinksFromNodeText(node) {
             }
 
             links << [uri: uri, title: title]
-        } else if (t) {
+        } 
+        // ✅ Obsidian URI
+        else if (t.startsWith("obsidian://")) {
+            def parts = t.split(' ', 2)
+            def uri = parts[0]
+            def title = (parts.length > 1) ? parts[1].trim() : "ابسیدین"
+            links << [uri: uri, title: title]
+        }
+        else if (t) {
             keepLines << t
         }
     }
@@ -215,21 +223,27 @@ def processSingleNode(node, mode) {
     }
 }
 
-// ================= آپدیت کانکتورها در سراسر نقشه =================
+// ================= آپدیت کامل نقشه (URI + Obsidian همه گره‌ها) =================
 def updateAllConnectors(mode) {
     def node = c.selected
     if (!node) return
     
+    // ✅ اول گره انتخاب شده (mode اعمال)
     processSingleNode(node, mode)
     
+    // ✅ همه گره‌های نقشه → URI ها + Obsidian استخراج + پاکسازی
     def allNodes = c.find { true }
     allNodes.each { n ->
         def proxyNode = asProxy(n)
-        if (!proxyNode) return
+        if (!proxyNode || proxyNode == node) return  // گره انتخاب شده قبلاً پردازش شد
         
+        // ✅ برای همه: URI ها + Obsidian استخراج
+        def newLinks = extractTextLinksFromNodeText(proxyNode)
         def connectors = extractConnectedNodes(proxyNode)
-        def textLinks = extractTextLinksFromDetails(proxyNode)
-        saveDetails(proxyNode, textLinks, connectors)
+        def existingTextLinks = extractTextLinksFromDetails(proxyNode)
+        def finalTextLinks = (existingTextLinks + newLinks).unique { it.uri }
+        
+        saveDetails(proxyNode, finalTextLinks, connectors)
     }
 }
 
@@ -255,4 +269,3 @@ try {
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
-
