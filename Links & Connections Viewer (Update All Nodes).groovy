@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - ICON ONLY + HR + //// MARKER v2 - NO MAP MESSAGE
+// aaa1386 - ICON ONLY + HR + ALL TEXT v2 - NO MARKER
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -171,33 +171,17 @@ def getSmartTitle(uri) {
     return title + '...'
 }
 
-// ================= Extract links - فقط بعد از //// =================
+// ================= Extract links - همه متن =================
 def extractTextLinksFromNodeText(node) {
     def freeplaneLinks = []
     def obsidianLinks = []
     def webLinks = []
     def keepLines = []
-    def processSection = false  // قبل از //// خاموش
-
+    
     def lines = node.text.split('\n')
     
     lines.each { l ->
         def trimmed = l.trim()
-        
-        // علامت شروع: ////
-        if (trimmed == "////") {
-            processSection = true
-            keepLines << l
-            return
-        }
-        
-        // قبل از //// : هیچ پردازشی نکن
-        if (!processSection) {
-            keepLines << l
-            return
-        }
-        
-        // بعد از //// : پردازش عادی
         if (!trimmed) {
             keepLines << l
             return
@@ -225,7 +209,7 @@ def extractTextLinksFromNodeText(node) {
             processed = true
         }
         
-        // 2. Markdown خالی: [](url) 🌐
+        // 2. Markdown خالی:  🌐
         else if (!processed && (trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
             def emptyMatcher = (trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
             emptyMatcher.each { match ->
@@ -419,21 +403,39 @@ def updateAllConnectors(mode) {
     def node = c.selected
     if (!node) return
 
+    // گره انتخاب شده
     processSingleNode(node, mode)
 
+    // بقیه گره‌ها: پردازش کامل با حالت دوطرفه
     def allNodes = c.find { true }
     allNodes.each { n ->
         def proxyNode = asProxy(n)
         if (!proxyNode || proxyNode == node) return
 
+        // پردازش کامل متن + کانکتورها + لینک دوطرفه
         def newLinks = extractTextLinksFromNodeText(proxyNode)
         def connectors = extractConnectedNodes(proxyNode)
         def existingTextLinks = extractTextLinksFromDetails(proxyNode)
         def finalTextLinks = (existingTextLinks + newLinks).unique { it.uri ?: "" }
 
         saveDetails(proxyNode, finalTextLinks, connectors)
+
+        // لینک دوطرفه برای همه گره‌ها
+        if (mode == "Two-way") {
+            newLinks.each { link ->
+                def uri = link.uri ?: ""
+                if (uri.contains("#")) {
+                    def targetId = uri.substring(uri.lastIndexOf('#') + 1)
+                    def targetNode = c.find { it.id == targetId }.find()
+                    if (targetNode && targetNode != proxyNode) {
+                        createBackwardTextLink(targetNode, proxyNode)
+                    }
+                }
+            }
+        }
     }
 }
+
 
 // ================= Execute =================
 try {
