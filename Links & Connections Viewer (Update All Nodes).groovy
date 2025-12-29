@@ -1,15 +1,15 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - ICON ONLY + HR + ALL TEXT v2 - NO MARKER
+// aaa1386 - ICON ONLY + HR + ALL TEXT v2 - NO MARKER - FreeplaneURI ONLY
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
 
-// ================= Check URI existence in WHOLE MAP =================
-def hasURI() {
+// ================= Check Freeplane URI existence in WHOLE MAP =================
+def hasFreeplaneURI() {
     def allNodes = c.find { true }
     allNodes.any { node ->
         def text = node.text ?: ""
-        text.contains("#") || text.contains("freeplane:") || text =~ /https?:\/\//
+        text.contains("#") || text.contains("freeplane:")
     }
 }
 
@@ -436,16 +436,15 @@ def updateAllConnectors(mode) {
     }
 }
 
-
 // ================= Execute =================
 try {
     def node = c.selected
     if (!node) return
 
-    def hasAnyUri = hasURI()
+    def hasFreeplaneUri = hasFreeplaneURI()
 
     def mode
-    if (hasAnyUri) {
+    if (hasFreeplaneUri) {
         mode = showSimpleDialog()
     } else {
         mode = "One-way"
