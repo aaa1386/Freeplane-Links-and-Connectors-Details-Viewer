@@ -50,7 +50,7 @@ def hasLinks(node) {
     return plainText =~ /https?:\/\/|freeplane:|obsidian:|\[.*https/
 }
 
-def processAllLinesToHTML(lines, backwardTitle = null) {
+def processAllLinesToHTML(lines, backwardTitle = null, currentNode = null) {
     def result = []
     
     lines.each { line ->
@@ -92,19 +92,20 @@ def processAllLinesToHTML(lines, backwardTitle = null) {
             def title = (parts.length > 1) ? parts[1]?.trim() : "ابسیدین"
             result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>📱 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
         }
-        // Freeplane 🔗
+        // Freeplane 🔗 - اصلاح شده
         else if (trimmed.startsWith("freeplane:") || trimmed.contains("#")) {
             def parts = trimmed.split(' ', 2)
             def uri = parts[0] ?: ""
-            def title = backwardTitle ?: ((parts.length > 1) ? parts[1]?.trim() : "لینک")
-            if (uri.contains("#")) {
-                def targetId = uri.substring(uri.lastIndexOf('#')+1)
+            def targetId = uri.contains("#") ? uri.substring(uri.lastIndexOf('#')+1) : null
+            def title = backwardTitle
+            if (!title && targetId && currentNode) {
                 def targetNode = c.find { it.id == targetId }.find()
-                if (targetNode && !backwardTitle) {
+                if (targetNode) {
                     title = getFirstLineFromText(extractPlainTextFromNode(targetNode))
                 }
             }
-            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🔗 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+            if (!title) title = ((parts.length > 1) ? parts[1]?.trim() : "لینک")
+            result << "<div style='margin-bottom:3px;text-align:right;'>🔗 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
         }
         // متن عادی
         else {
@@ -136,8 +137,8 @@ def processSingleNode(node, mode) {
     
     // ۲. HTML کن
     def lines = plainText.split('\n')
-    def htmlLines = processAllLinesToHTML(lines)
-    node.text = "<html><body style='direction:rtl;font-family:Tahoma;'>${htmlLines.join('\n')}</body></html>"
+    def htmlLines = processAllLinesToHTML(lines, null, node)
+    node.text = "<html><body>${htmlLines.join('\n')}</body></html>"
     
     // ۳. Two-way
     if (mode == "Two-way" && !freeplaneTargets.isEmpty()) {
@@ -150,14 +151,13 @@ def processSingleNode(node, mode) {
                 def backwardLine = "#${sourceId} ${sourceTitle}"
                 def targetPlain = extractPlainTextFromNode(targetNode)
                 def targetLines = targetPlain.split('\n') + [backwardLine]
-                def targetHTML = processAllLinesToHTML(targetLines, sourceTitle)
-                targetNode.text = "<html><body style='direction:rtl;font-family:Tahoma;'>${targetHTML.join('\n')}</body></html>"
+                def targetHTML = processAllLinesToHTML(targetLines, sourceTitle, targetNode)
+                targetNode.text = "<html><body>${targetHTML.join('\n')}</body></html>"
             }
         }
     }
 }
 
-// ✅ فیکس: همیشه دیالوگ نشون بده
 def processAllMap(mode) {
     def processed = 0
     
@@ -167,16 +167,11 @@ def processAllMap(mode) {
             processed++
         }
     }
-    
-    ui.showMessage("✅ ${processed} گره آپدیت شد!", 1)
 }
 
 try {
-    // ✅ فیکس: همیشه دیالوگ!
     def mode = showSimpleDialog()
     processAllMap(mode)
-
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
-
