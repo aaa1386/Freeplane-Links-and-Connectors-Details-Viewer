@@ -1,8 +1,9 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - FINAL - درست کار می‌کند
+// aaa1386 - Two-way + تمام نقشه FINAL - اصلاح لینک‌های HTML (لینک‌های موجود حفظ نمی‌شوند)
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
+import static java.util.regex.Pattern.*
 
 def showSimpleDialog() {
     Object[] options = ["One-way", "Two-way"]
@@ -19,56 +20,41 @@ def showSimpleDialog() {
 
 def extractPlainTextFromNode(node) {
     def c = node.text ?: ""
-    if (!c.contains("<body>")) return HtmlUtils.htmlToPlain(c)
-    
-    def s = c.indexOf("<body>") + 6
-    def e = c.indexOf("</body>")
-    if (s <= 5 || e <= s) return HtmlUtils.htmlToPlain(c)
-    
-    def htmlContent = c.substring(s, e)
-    
-    // پیدا کردن تمام <a href=...> بدون شرط اضافی
-    def links = []
-    def pos = 0
-    while (pos < htmlContent.length()) {
-        def aStart = htmlContent.indexOf("<a", pos)
-        if (aStart == -1) break
-        
-        def hrefPos = htmlContent.indexOf('href="', aStart)
-        if (hrefPos == -1) { pos = aStart + 2; continue }
-        
-        def hrefEnd = htmlContent.indexOf('"', hrefPos + 6)
-        if (hrefEnd == -1) { pos = aStart + 2; continue }
-        def url = htmlContent.substring(hrefPos + 6, hrefEnd)
-        
-        def titleStart = htmlContent.indexOf('>', hrefEnd) + 1
-        def titleEnd = htmlContent.indexOf('</a>', titleStart)
-        if (titleEnd == -1) { pos = aStart + 2; continue }
-        def title = htmlContent.substring(titleStart, titleEnd).trim()
-        
-        if (title && url.startsWith("http")) {
-            links << "[${title}](${url})"
+    if (c.contains("<body>")) {
+        def s = c.indexOf("<body>") + 6
+        def e = c.indexOf("</body>")
+        if (s > 5 && e > s) {
+            def htmlContent = c.substring(s, e)
+            
+            // تمام لینک‌های HTML موجود را کامل حذف کن
+            def plainText = htmlContent
+                .replaceAll(/<a[^>]*>.*?<\/a>/, '')  // لینک‌های HTML حذف
+                .replaceAll("<[^>]+>", "\n")
+                .replaceAll("&nbsp;", " ")
+                .replaceAll("\n+", "\n")
+                .trim()
+            
+            return plainText
         }
-        pos = titleEnd + 4
     }
-    
-    return links.join('\n')
+    c
 }
 
 def getFirstLineFromText(text) {
     if (!text) return "لینک"
-    text.split('\n')[0]?.trim() ?: "لینک"
+    text.split('\n').find { it.trim() && !it.startsWith("freeplane:") && !it.startsWith("obsidian://") }?.trim() ?: "لینک"
 }
 
 def getSmartTitle(uri) {
     def parts = uri.split(/\//)
-    if (parts.size() < 4) return uri.take(40) + '...'
-    return "${parts[0]}//${parts[2]}/..."
+    if (parts.size() < 4) return uri + '...'
+    def title = parts[0] + '//' + parts[2] + '/'  
+    return title + '...'
 }
 
 def hasLinks(node) {
     def plainText = extractPlainTextFromNode(node)
-    return plainText.contains("[") || plainText.contains("http") || plainText.contains("freeplane:") || plainText.contains("obsidian:")
+    return plainText =~ /https?:\/\/|freeplane:|obsidian:|\[.*https/
 }
 
 def processAllLinesToHTML(lines, backwardTitle = null, currentNode = null) {
@@ -76,47 +62,62 @@ def processAllLinesToHTML(lines, backwardTitle = null, currentNode = null) {
     
     lines.each { line ->
         def trimmed = line.trim()
-        if (!trimmed) return
-        
-        // Markdown [title](url)
-        if (trimmed.contains("[") && trimmed.contains("](") && trimmed.contains("http")) {
-            def startB = trimmed.indexOf('[')
-            def endB = trimmed.indexOf(']', startB)
-            def startP = trimmed.indexOf('(', endB)
-            def endP = trimmed.indexOf(')', startP)
-            
-            if (startB > -1 && endB > startB && startP > endB && endP > startP) {
-                def title = trimmed.substring(startB + 1, endB).trim()
-                def uri = trimmed.substring(startP + 1, endP).trim()
-                if (!title || title == uri) title = getSmartTitle(uri)
-                result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
-                return
-            }
+        if (!trimmed) {
+            result << line
+            return
         }
         
-        // Plain URL
-        if (trimmed.startsWith("http")) {
+        // Web 🌐
+        if (trimmed =~ /^https?:\/\/[^\s]+$/) {
             result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🌐 <a data-link-type='text' href='${trimmed}'>${HtmlUtils.toXMLEscapedText(getSmartTitle(trimmed))}</a></div>"
-            return
         }
-        
-        // Obsidian
-        if (trimmed.startsWith("obsidian://")) {
+        // Markdown 🌐
+        else if ((trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
+            def mdMatcher = (trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
+            def title = mdMatcher[0][1].trim()
+            def uri = mdMatcher[0][2].trim()
+            if (!title || title == uri) title = getSmartTitle(uri)
+            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // Markdown خالی 🌐
+        else if ((trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
+            def emptyMatcher = (trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
+            def uri = emptyMatcher[0][1].trim()
+            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(getSmartTitle(uri))}</a></div>"
+        }
+        // URL + Title 🌐
+        else if ((trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/)) {
+            def urlTitleMatcher = (trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/)
+            def uri = urlTitleMatcher[0][1].trim()
+            def title = urlTitleMatcher[0][2].trim()
+            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // Obsidian 📱
+        else if (trimmed.startsWith("obsidian://")) {
             def parts = trimmed.split(' ', 2)
-            def title = parts.length > 1 ? parts[1].trim() : "ابسیدین"
-            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>📱 <a data-link-type='text' href='${parts[0]}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
-            return
+            def uri = parts[0] ?: ""
+            def title = (parts.length > 1) ? parts[1]?.trim() : "ابسیدین"
+            result << "<div style='margin-bottom:3px;text-align:right;direction:rtl;'>📱 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
         }
-        
-        // Freeplane
-        if (trimmed.startsWith("freeplane:") || trimmed.indexOf('#') > -1) {
+        // Freeplane 🔗
+        else if (trimmed.startsWith("freeplane:") || trimmed.contains("#")) {
             def parts = trimmed.split(' ', 2)
-            def title = parts.length > 1 ? parts[1].trim() : "لینک"
-            result << "<div style='margin-bottom:3px;text-align:right;'>🔗 <a data-link-type='text' href='${parts[0]}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
-            return
+            def uri = parts[0] ?: ""
+            def targetId = uri.contains("#") ? uri.substring(uri.lastIndexOf('#')+1) : null
+            def title = backwardTitle
+            if (!title && targetId && currentNode) {
+                def targetNode = c.find { it.id == targetId }.find()
+                if (targetNode) {
+                    title = getFirstLineFromText(extractPlainTextFromNode(targetNode))
+                }
+            }
+            if (!title) title = ((parts.length > 1) ? parts[1]?.trim() : "لینک")
+            result << "<div style='margin-bottom:3px;text-align:right;'>🔗 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
         }
-        
-        result << trimmed
+        // متن عادی
+        else {
+            result << trimmed
+        }
     }
     
     return result
@@ -124,33 +125,40 @@ def processAllLinesToHTML(lines, backwardTitle = null, currentNode = null) {
 
 def processSingleNode(node, mode) {
     def plainText = extractPlainTextFromNode(node)
-    if (!plainText?.trim()) return
     
-    // Freeplane targets
+    if (!hasLinks(node)) return
+    
+    // Freeplane targets پیدا کن (فقط از plainText تمیز)
     def freeplaneTargets = []
     plainText.split('\n').each { line ->
-        if (line.trim().contains("#")) {
-            def targetId = line.trim().split(' ')[0].split('#')[1]
-            freeplaneTargets << targetId
+        def trimmed = line.trim()
+        if (trimmed.startsWith("freeplane:") || trimmed.contains("#")) {
+            def parts = trimmed.split(' ', 2)
+            def uri = parts[0] ?: ""
+            if (uri.contains("#")) {
+                def targetId = uri.substring(uri.lastIndexOf('#')+1)
+                freeplaneTargets << targetId
+            }
         }
     }
     
-    // HTML
-    def lines = plainText.split('\n').findAll { it.trim() }
-    def htmlLines = processAllLinesToHTML(lines)
+    // HTML کن (فقط Markdownهای واقعی)
+    def lines = plainText.split('\n')
+    def htmlLines = processAllLinesToHTML(lines, null, node)
     node.text = "<html><body>${htmlLines.join('\n')}</body></html>"
     
-    // Two-way (ساده)
+    // Two-way
     if (mode == "Two-way" && !freeplaneTargets.isEmpty()) {
         def sourceId = node.id
         def sourceTitle = getFirstLineFromText(plainText)
+        
         freeplaneTargets.each { targetId ->
             def targetNode = c.find { it.id == targetId }.find()
             if (targetNode && targetNode != node) {
+                def backwardLine = "#${sourceId} ${sourceTitle}"
                 def targetPlain = extractPlainTextFromNode(targetNode)
-                def newLine = "#${sourceId} ${sourceTitle}"
-                def targetLines = (targetPlain.split('\n') + [newLine]).findAll { it.trim() }
-                def targetHTML = processAllLinesToHTML(targetLines)
+                def targetLines = targetPlain.split('\n') + [backwardLine]
+                def targetHTML = processAllLinesToHTML(targetLines, sourceTitle, targetNode)
                 targetNode.text = "<html><body>${targetHTML.join('\n')}</body></html>"
             }
         }
@@ -159,18 +167,19 @@ def processSingleNode(node, mode) {
 
 def processAllMap(mode) {
     def processed = 0
+    
     c.find { true }.each { node ->
         if (hasLinks(node)) {
             processSingleNode(node, mode)
             processed++
         }
     }
-    ui.showMessage("✅ ${processed} گره پردازش شد", 1)
+    ui.showMessage("✅ ${processed} نود پردازش شد", 1)
 }
 
 try {
     def mode = showSimpleDialog()
-    processAllMap(mode)
+    if (mode) processAllMap(mode)
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
