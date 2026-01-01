@@ -1,5 +1,6 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
 // aaa1386 - ICON ONLY + HR + ALL TEXT v2 - FIXED + OPTIMIZED
+// MODIFIED: Always create Freeplane links in both source and target nodes
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -141,7 +142,7 @@ def generateConnectorsHTML(grouped) {
         def nodes = grouped[type]
         if (nodes && !nodes.isEmpty()) {
             def icon =
-                (type == 'Input')  ? '↙️ ' :
+                (type == 'Input')  ? '🔙 ' :
                 (type == 'Output') ? '↗️ ' :
                                      '↔️ '
             nodes.each { n ->
@@ -171,7 +172,7 @@ def getSmartTitle(uri) {
     return title + '...'
 }
 
-// ================= Extract links - FINAL FIXED =================
+// ================= Extract links - FIXED =================
 def extractTextLinksFromNodeText(node) {
     def freeplaneLinks = []
     def obsidianLinks = []
@@ -228,8 +229,8 @@ def extractTextLinksFromNodeText(node) {
             processed = true
         }
         
-        // 4. Freeplane
-        else if (!processed && (trimmed.startsWith("freeplane:") || trimmed.contains("#"))) {
+        // 4. Freeplane - FIXED: فقط لینک‌های معتبر Freeplane
+        else if (!processed && (trimmed.startsWith("freeplane:") || trimmed.startsWith("#"))) {
             def parts = trimmed.split(' ', 2)
             def uri = parts[0] ?: ""
             def titlePart = parts.length > 1 ? parts[1]?.trim() : null
@@ -286,7 +287,7 @@ def resolveTitleForLink(link) {
 }
 
 // ================= Save Details =================
-def saveDetails(node, textLinks, connectors) {
+def saveDetails(node, textLinks, connectors, mode, isSource = true) {
     def html = []
 
     // Web Links 🌐 - اول
@@ -304,7 +305,7 @@ def saveDetails(node, textLinks, connectors) {
         }
     }
 
-    // Freeplane Links 🔗
+    // Freeplane Links 🔗 - با آیکن بر اساس mode و موقعیت گره
     def freeplaneLinks = textLinks.findAll { 
         def u = it.uri ?: ""
         u.startsWith("freeplane:") || u.startsWith("#")
@@ -312,7 +313,14 @@ def saveDetails(node, textLinks, connectors) {
     if (freeplaneLinks && !freeplaneLinks.isEmpty()) {
         freeplaneLinks.each { l ->
             def titleNow = resolveTitleForLink(l)
-            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>🔗 " +
+            def icon
+            if (mode == "Two-way") {
+                icon = "🔗↔️ "
+            } else {
+                // حالت یک طرفه
+                icon = isSource ? "🔗↗️ " : "🔗🔙 "
+            }
+            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>${icon}" +
                     "<a data-link-type='text' href='${l.uri ?: ""}'>" +
                     HtmlUtils.toXMLEscapedText(titleNow) +
                     "</a></div>"
@@ -349,17 +357,31 @@ def saveDetails(node, textLinks, connectors) {
     }
 }
 
-// ================= Backward text link =================
-def createBackwardTextLink(targetNode, sourceNode) {
+// ================= Create backward link ALWAYS =================
+def createBackwardLinkInTarget(targetNode, sourceNode, mode) {
     def sourceUri = "#${sourceNode.id}"
-    def title = getFirstLineFromText(extractPlainTextFromNode(sourceNode))
-
-    def textLinks = extractTextLinksFromDetails(targetNode)
-    if (!textLinks.any { (it.uri ?: "") == sourceUri }) {
-        textLinks << [uri: sourceUri, title: title]
+    def sourceTitle = getFirstLineFromText(extractPlainTextFromNode(sourceNode))
+    
+    // استخراج لینک‌های موجود از target
+    def existingLinks = extractTextLinksFromDetails(targetNode)
+    
+    // بررسی وجود لینک بازگشتی
+    def linkExists = false
+    existingLinks.each { link ->
+        if (link.uri == sourceUri) {
+            linkExists = true
+            link.title = sourceTitle  // به‌روزرسانی عنوان
+        }
     }
-
-    saveDetails(targetNode, textLinks, extractConnectedNodes(targetNode))
+    
+    // اگر لینک وجود ندارد، اضافه کن
+    if (!linkExists) {
+        existingLinks << [uri: sourceUri, title: sourceTitle]
+    }
+    
+    // ذخیره جزئیات با آیکن مناسب (گره مقصد = isSource = false)
+    def connectors = extractConnectedNodes(targetNode)
+    saveDetails(targetNode, existingLinks, connectors, mode, false)
 }
 
 // ================= Process single node =================
@@ -367,62 +389,110 @@ def processSingleNode(node, mode) {
     def newLinks = extractTextLinksFromNodeText(node)
     def connectors = extractConnectedNodes(node)
     def existingTextLinks = extractTextLinksFromDetails(node)
-    def finalTextLinks = (existingTextLinks + newLinks).unique { it.uri ?: "" }
-
-    saveDetails(node, finalTextLinks, connectors)
-
-    if (mode == "Two-way") {
-        newLinks.each { link ->
-            def uri = link.uri ?: ""
-            if (uri.contains("#")) {
-                def targetId = uri.substring(uri.lastIndexOf('#') + 1)
-                def targetNode = c.find { it.id == targetId }.find()
-                if (targetNode && targetNode != node) {
-                    createBackwardTextLink(targetNode, node)
-                }
+    
+    // ترکیب لینک‌های قدیمی و جدید
+    def finalTextLinks = []
+    
+    // اول لینک‌های جدید
+    newLinks.each { newLink ->
+        def found = false
+        existingTextLinks.each { existingLink ->
+            if (existingLink.uri == newLink.uri) {
+                found = true
+                // به‌روزرسانی عنوان
+                existingLink.title = newLink.title ?: existingLink.title
+            }
+        }
+        if (!found) {
+            finalTextLinks << newLink
+        }
+    }
+    
+    // اضافه کردن لینک‌های قدیمی که در جدید نیستند
+    existingTextLinks.each { existingLink ->
+        def found = false
+        newLinks.each { newLink ->
+            if (newLink.uri == existingLink.uri) {
+                found = true
+            }
+        }
+        if (!found) {
+            finalTextLinks << existingLink
+        }
+    }
+    
+    // ذخیره در مبدا (گره منبع)
+    saveDetails(node, finalTextLinks, connectors, mode, true)
+    
+    // برای هر لینک Freeplane، حتما لینک بازگشتی ایجاد کن
+    newLinks.each { link ->
+        def uri = link.uri ?: ""
+        if (uri.contains("#")) {
+            def targetId = uri.substring(uri.lastIndexOf('#') + 1)
+            def targetNode = c.find { it.id == targetId }.find()
+            if (targetNode && targetNode != node) {
+                createBackwardLinkInTarget(targetNode, node, mode)
             }
         }
     }
 }
 
-// ================= Full map update - OPTIMIZED =================
+// ================= Full map update =================
 def updateAllConnectors(mode) {
-    def node = c.selected
-    if (!node) return
+    def selectedNode = c.selected
+    if (!selectedNode) return
 
-    // 🚀 Cache all nodes - یکبار محاسبه!
+    // پردازش گره انتخاب شده
+    processSingleNode(selectedNode, mode)
+    
+    // پردازش سایر گره‌ها برای اطمینان از همگام‌سازی
     def allNodes = c.find { true }.toList()
-    def processed = [] as Set
-
-    // گره انتخاب شده
-    processSingleNode(node, mode)
-
-    // بقیه گره‌ها
+    def processed = [selectedNode.id] as Set
+    
     allNodes.each { n ->
         def proxyNode = asProxy(n)
-        if (!proxyNode || proxyNode == node || processed.contains(proxyNode.id)) return
+        if (!proxyNode || processed.contains(proxyNode.id)) return
         
         processed << proxyNode.id
         
+        // استخراج لینک‌ها از این گره
         def newLinks = extractTextLinksFromNodeText(proxyNode)
         def connectors = extractConnectedNodes(proxyNode)
         def existingTextLinks = extractTextLinksFromDetails(proxyNode)
-        def finalTextLinks = (existingTextLinks + newLinks).unique { it.uri ?: "" }
-
-        saveDetails(proxyNode, finalTextLinks, connectors)
-
-        if (mode == "Two-way") {
-            newLinks.each { link ->
-                def uri = link.uri ?: ""
-                if (uri.contains("#")) {
-                    def targetId = uri.substring(uri.lastIndexOf('#') + 1)
-                    def targetNode = c.find { it.id == targetId }.find()
-                    if (targetNode && targetNode != proxyNode) {
-                        createBackwardTextLink(targetNode, proxyNode)
-                    }
+        
+        // ترکیب لینک‌ها
+        def finalTextLinks = []
+        newLinks.each { newLink ->
+            def found = false
+            existingTextLinks.each { existingLink ->
+                if (existingLink.uri == newLink.uri) {
+                    found = true
+                    existingLink.title = newLink.title ?: existingLink.title
                 }
             }
+            if (!found) {
+                finalTextLinks << newLink
+            }
         }
+        
+        existingTextLinks.each { existingLink ->
+            def found = false
+            newLinks.each { newLink ->
+                if (newLink.uri == existingLink.uri) {
+                    found = true
+                }
+            }
+            if (!found) {
+                finalTextLinks << existingLink
+            }
+        }
+        
+        // تشخیص اینکه آیا این گره مبدا لینکی است یا مقصد
+        // اگر لینک‌های Freeplane دارد که به گره‌های دیگر اشاره می‌کنند، مبدا است
+        def isSource = newLinks.any { it.uri?.contains("#") }
+        
+        // ذخیره جزئیات
+        saveDetails(proxyNode, finalTextLinks, connectors, mode, isSource)
     }
 }
 
