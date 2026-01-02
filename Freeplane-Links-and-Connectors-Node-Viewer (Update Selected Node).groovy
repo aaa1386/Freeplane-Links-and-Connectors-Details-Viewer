@@ -1,58 +1,186 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - 4 SLASH //// MARKER v6.3.10 FINAL - Markdown خالی + Smart Title
+// aaa1386 - v7.6.2 FIXED - حفظ کامل لینک‌های HTML ✅
 
 import org.freeplane.core.util.HtmlUtils
 
-// ================= بررسی وجود URI =================
-def checkHasFreeplaneLink(node) {
+// ================= توابع کمکی =================
+
+// 🔥 استخراج SMART متن خام - فقط لینک‌های کانکتوری را حذف کن
+def extractPlainTextForProcessing(node) {
     def text = node.text ?: ""
-    if (!text.contains("<body>")) {
-        return text.contains("freeplane:")
+    if (text.contains("<body>")) {
+        def s = text.indexOf("<body>") + 6
+        def e = text.indexOf("</body>")
+        if (s > 5 && e > s) {
+            def htmlContent = text.substring(s, e)
+            
+            // فقط لینک‌های کانکتوری (با آیکن فلش) را حذف کن
+            // لینک‌های متنی (🌐📱🔗) را حفظ کن
+            def processed = htmlContent.replaceAll(
+                /<div style=['"]margin-bottom: 3px; text-align: right['"]>[\s\n]*[↙↗↔]️?[\s\n]*<a[^>]*data-link-type=['"]connector['"][^>]*>.*?<\/a>[\s\n]*<\/div>/,
+                ''
+            )
+            
+            // حالا HTML را به متن تبدیل کن (اما لینک‌های <a> باقی می‌مانند)
+            def plainText = processed
+                .replaceAll(/<div[^>]*>(.*?)<\/div>/, '$1\n')
+                .replaceAll(/<br\/?>/, '\n')
+                .replaceAll(/<[^>]+>/, '') // فقط تگ‌های دیگر حذف شوند
+                .replaceAll(/&nbsp;/, ' ')
+                .replaceAll(/\n\n+/, '\n')
+                .trim()
+            
+            // 🔥 فیلتر کردن کامنت‌ها و کد اسکریپت
+            def filteredLines = plainText.split('\n')
+                .collect { it.trim() }
+                .findAll { 
+                    it && 
+                    !it.startsWith("//") && 
+                    !it.startsWith("@ExecutionModes") &&
+                    !it.startsWith("import ") &&
+                    !it.startsWith("def ") &&
+                    !it.startsWith("try {") &&
+                    !it.startsWith("catch ")
+                }
+            
+            return filteredLines.join('\n').trim()
+        }
     }
-    def s = text.indexOf("<body>") + 6
-    def e = text.indexOf("</body>")
-    if (s > 5 && e > s) {
-        def body = text.substring(s, e)
-        return body.contains("freeplane:")
+    
+    // 🔥 برای متن ساده بدون HTML هم فیلتر اعمال کن
+    if (text) {
+        def filteredLines = text.split('\n')
+            .collect { it.trim() }
+            .findAll { 
+                it && 
+                !it.startsWith("//") && 
+                !it.startsWith("@ExecutionModes") &&
+                !it.startsWith("import ") &&
+                !it.startsWith("def ") &&
+                !it.startsWith("try {") &&
+                !it.startsWith("catch ")
+            }
+        return filteredLines.join('\n').trim()
     }
+    
+    return text
+}
+
+// 🔥 تابع جدید: بررسی وجود لینک به گره خاص
+def hasLinkToNode(targetNode, sourceNodeId) {
+    def text = targetNode.text ?: ""
+    
+    // بررسی در متن ساده
+    def plainText = extractPlainTextForProcessing(targetNode)
+    if (plainText.contains("#${sourceNodeId}")) {
+        return true
+    }
+    
+    // بررسی در HTML (لینک‌های ساخته شده)
+    if (text.contains("<body>")) {
+        def s = text.indexOf("<body>") + 6
+        def e = text.indexOf("</body>")
+        if (s > 5 && e > s) {
+            def htmlContent = text.substring(s, e)
+            
+            // جستجوی لینک‌های متنی که به sourceNodeId اشاره می‌کنند
+            if (htmlContent.contains("#${sourceNodeId}")) {
+                return true
+            }
+            
+            // جستجوی لینک‌های کانکتوری
+            def pattern = /<a\s+[^>]*data-link-type=['"]connector['"][^>]*href=['"]#${sourceNodeId}['"][^>]*>/
+            if (htmlContent =~ pattern) {
+                return true
+            }
+        }
+    }
+    
     return false
 }
 
-// 🔥 محتوای اصلی خالص (بدون لینک)
-def extractMainContent(node) {
+// 🔥 تابع جدید: استخراج محتوای واقعی گره - نسخه تصحیح شده
+def extractNodeContent(node) {
+    def result = []
     def text = node.text ?: ""
     
-    if (!text.contains("<body>")) {
-        return text.replaceAll(/https?:\/\/[^\s\n]+/, "")
-                  .replaceAll(/\[[^\]]*\]\s*\([^)]+\)/, "")
-                  .replaceAll(/freeplane:[^\s\n]+/, "")
-                  .replaceAll(/obsidian:\/\/[^\s\n]+/, "")
-                  .replaceAll(/\#[^\s\n]+/, "")
-                  .trim()
+    // اگر متن حاوی HTML است
+    if (text.contains("<body>")) {
+        try {
+            def s = text.indexOf("<body>") + 6
+            def e = text.indexOf("</body>")
+            if (s > 5 && e > s) {
+                def htmlContent = text.substring(s, e)
+                
+                // 🔥 KEY FIX: خطوط HTML را جداگانه پردازش کن
+                def lines = htmlContent.split('\n')
+                
+                lines.each { line ->
+                    def trimmed = line.trim()
+                    if (!trimmed) return
+                    
+                    // 🔥 اگر خط یک لینک HTML کامل است (با آیکن و تگ <a>)
+                    if (trimmed.matches(/.*<div[^>]*>\s*[🌐📱🔗]\s*<a[^>]*data-link-type=['"]text['"][^>]*>.*?<\/a>\s*<\/div>.*/)) {
+                        // لینک HTML رو مستقیماً به نتیجه اضافه کن
+                        result << trimmed
+                    }
+                    // 🔥 اگر فقط لینک <a> است (بدون div)
+                    else if (trimmed.matches(/.*[🌐📱🔗]\s*<a[^>]*data-link-type=['"]text['"][^>]*>.*?<\/a>.*/)) {
+                        result << trimmed
+                    }
+                    // اگر متن ساده است
+                    else {
+                        // تگ‌ها رو حذف کن تا متن ساده بدست بیاد
+                        def plainText = trimmed
+                            .replaceAll(/<[^>]+>/, '')
+                            .replaceAll(/&nbsp;/, ' ')
+                            .trim()
+                        
+                        if (plainText && 
+                            !plainText.startsWith("//") && 
+                            !plainText.startsWith("@ExecutionModes") &&
+                            !plainText.startsWith("import ") &&
+                            !plainText.startsWith("def ") &&
+                            !plainText.startsWith("try {") &&
+                            !plainText.startsWith("catch ") &&
+                            !plainText.matches(/^[↙↗↔]️?\s*.+$/)) {
+                            result << plainText
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            println "خطا در extractNodeContent: ${ex.message}"
+            def cleanText = text.replaceAll(/<[^>]+>/, '').trim()
+            return cleanText ? [cleanText] : []
+        }
+    } else {
+        // متن ساده - فیلتر کردن کامنت‌ها و کد اسکریپت
+        result = text.split('\n')
+            .collect { it.trim() }
+            .findAll { 
+                it && 
+                !it.startsWith("//") && 
+                !it.startsWith("@ExecutionModes") &&
+                !it.startsWith("import ") &&
+                !it.startsWith("def ") &&
+                !it.startsWith("try {") &&
+                !it.startsWith("catch ") &&
+                // 🔥 خطوطی که فقط آیکن کانکتور هستند را حذف کن
+                !it.matches(/^[↙↗↔]️?\s*.+$/)
+            }
     }
     
-    def s = text.indexOf("<body>") + 6
-    def e = text.indexOf("</body>")
-    if (s > 5 && e > s) {
-        def htmlContent = text.substring(s, e)
-        def cleanText = htmlContent
-            .replaceAll(/<div[^>]*>[\s\n]*[🌐📱🔗↙↗↔]️?[\s\n]*<a[^>]*>.*?<\/a>[\s\n]*<\/div>/, "")
-            .replaceAll("<[^>]+>", "\n")
-            .replaceAll("&nbsp;", " ")
-            .replaceAll("\n+", "\n")
-            .trim()
-        return cleanText
-    }
-    
-    return text.replaceAll("<[^>]+>", "\n").trim()
+    return result ?: []
 }
+
+// ================= سایر توابع =================
 
 def getFirstLineFromText(text) {
     if (!text) return "لینک"
     text.split('\n').find { it.trim() && !it.startsWith("freeplane:") && !it.startsWith("obsidian://") }?.trim() ?: "لینک"
 }
 
-// 🔥 Smart Title - تا سومین اسلش
 def getSmartTitle(uri) {
     if (!uri) return "لینک"
     def parts = uri.split(/\//)
@@ -64,7 +192,6 @@ def getSmartTitle(uri) {
     return "${protocol}${slashes}${domain}/..."
 }
 
-// 🔥 عنوان از گره مقصد
 def getTargetNodeTitle(freeplaneUri) {
     if (!freeplaneUri?.contains("#")) return "لینک"
     
@@ -72,7 +199,7 @@ def getTargetNodeTitle(freeplaneUri) {
     def targetNode = c.find { it.id == targetId }.find()
     
     if (targetNode) {
-        return getFirstLineFromText(extractMainContent(targetNode))
+        return getFirstLineFromText(extractPlainTextForProcessing(targetNode))
     }
     return "لینک"
 }
@@ -150,12 +277,12 @@ def extractConnectedNodes(node) {
     grouped
 }
 
-def generateConnectorsHTML(grouped) {
+// 🔥 تابع جدید: ساخت همه کانکتورها (برای گره اصلی)
+def generateAllConnectorsHTML(grouped) {
     def html = []
-
     def makeLink = { n ->
         "<a data-link-type='connector' href='#${n.id}'>" +
-        HtmlUtils.toXMLEscapedText(getFirstLineFromText(extractMainContent(n))) +
+        HtmlUtils.toXMLEscapedText(getFirstLineFromText(extractPlainTextForProcessing(n))) +
         "</a>"
     }
 
@@ -165,29 +292,117 @@ def generateConnectorsHTML(grouped) {
             def icon = 
                 (type == 'ورودی')   ? '↙️ ' :
                 (type == 'خروجی')   ? '↗️ ' :
-                                       '↔️ '
+                                      '↔️ '
             nodes.each { n ->
-                html << "<div style='margin-right:0px;margin-bottom:3px;text-align:right;direction:rtl;'>${icon}${makeLink(n)}</div>"
+                html << "<div style='margin-bottom: 3px; text-align: right'>${icon}${makeLink(n)}</div>"
             }
         }
     }
     html.join("")
 }
 
-// 🔥 استخراج لینک‌های متنی از HTML
-def extractTextLinksFromNodeHTML(node) {
-    def list = []
-    def h = node.text
-    if (!h || !h.contains("<body>")) return list
+// 🔥 تابع: فقط کانکتورهای جدید اضافه کن (برای گره‌های دیگر)
+def generateNewConnectorsHTML(grouped, existingIds = []) {
+    def html = []
+    def makeLink = { n ->
+        def nodeId = n.id
+        if (existingIds.contains(nodeId)) return "" // تکراری را نریز!
+        
+        "<a data-link-type='connector' href='#${nodeId}'>" +
+        HtmlUtils.toXMLEscapedText(getFirstLineFromText(extractPlainTextForProcessing(n))) +
+        "</a>"
+    }
+
+    ['ورودی','خروجی','دوطرفه'].each { type ->
+        def nodes = grouped[type]
+        if (nodes && !nodes.isEmpty()) {
+            def icon = 
+                (type == 'ورودی')   ? '↙️ ' :
+                (type == 'خروجی')   ? '↗️ ' :
+                                      '↔️ '
+            nodes.each { n ->
+                def linkHtml = makeLink(n)
+                if (linkHtml) { // فقط اگر جدید باشد
+                    html << "<div style='margin-bottom: 3px; text-align: right'>${icon}${linkHtml}</div>"
+                }
+            }
+        }
+    }
+    html.join("")
+}
+
+// 🔥 پردازش خطوط با منطق صحیح
+def processLinesToHTML(lines, backwardTitle = null, currentNode = null) {
+    def result = []
     
-    def s = h.indexOf("<body>") + 6
-    def e = h.indexOf("</body>")
-    if (s <= 5 || e <= s) return list
+    lines.each { line ->
+        def trimmed = line.trim()
+        if (!trimmed) return
+        
+        // 🔥 اگر خط از قبل یک لینک HTML کامل است، تغییرش نده
+        if (trimmed.startsWith('<div') && trimmed.contains('data-link-type="text"')) {
+            result << trimmed
+            return
+        }
+        
+        // 🔥 اگر خط فقط لینک <a> است (بدون div wrapper)
+        if (trimmed.startsWith('🌐 <a') || trimmed.startsWith('📱 <a') || trimmed.startsWith('🔗 <a')) {
+            // به صورت div-wrap شده برگردون
+            result << "<div style='margin-bottom: 3px; text-align: right'>${trimmed}</div>"
+            return
+        }
+        
+        // Web 🌐 (متن ساده)
+        if (trimmed =~ /^https?:\/\/[^\s]+$/) {
+            result << "<div style='margin-bottom: 3px; text-align: right'>🌐 <a data-link-type='text' href='${trimmed}'>${HtmlUtils.toXMLEscapedText(getSmartTitle(trimmed))}</a></div>"
+        }
+        // Markdown [text](url) 🌐
+        else if ((trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
+            def mdMatcher = (trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
+            def title = mdMatcher[0][1].trim()
+            def uri = mdMatcher[0][2].trim()
+            if (!title || title == uri) title = getSmartTitle(uri)
+            result << "<div style='margin-bottom: 3px; text-align: right'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // URL + Title 🌐 (متن ساده)
+        else if ((trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/)) {
+            def urlTitleMatcher = (trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/)
+            def uri = urlTitleMatcher[0][1].trim()
+            def title = urlTitleMatcher[0][2].trim()
+            result << "<div style='margin-bottom: 3px; text-align: right'>🌐 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // Obsidian 📱 (متن ساده)
+        else if (trimmed.startsWith("obsidian://")) {
+            def parts = trimmed.split(' ', 2)
+            def uri = parts[0] ?: ""
+            def title = (parts.length > 1) ? parts[1]?.trim() : "ابسیدین"
+            result << "<div style='margin-bottom: 3px; text-align: right'>📱 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // Freeplane 🔗 (متن ساده)
+        else if (trimmed.startsWith("freeplane:") || (trimmed.contains("#") && !trimmed.startsWith("obsidian://"))) {
+            def parts = trimmed.split(' ', 2)
+            def uri = parts[0] ?: ""
+            def title = backwardTitle
+            if (!title && uri.contains("#") && currentNode) {
+                def targetId = uri.substring(uri.lastIndexOf('#')+1)
+                def targetNode = c.find { it.id == targetId }.find()
+                if (targetNode) {
+                    title = getFirstLineFromText(extractPlainTextForProcessing(targetNode))
+                }
+            }
+            if (!title) title = ((parts.length > 1) ? parts[1]?.trim() : "لینک")
+            result << "<div style='margin-bottom: 3px; text-align: right'>🔗 <a data-link-type='text' href='${uri}'>${HtmlUtils.toXMLEscapedText(title)}</a></div>"
+        }
+        // متن عادی (نه لینک)
+        else {
+            // 🔥 فقط متن ساده (با escaping)
+            if (!trimmed.matches(/^[↙↗↔]️?\s*.+$/)) {
+                result << HtmlUtils.toXMLEscapedText(trimmed)
+            }
+        }
+    }
     
-    def body = h.substring(s, e)
-    def m = body =~ /<a\s+data-link-type=['"]text['"][^>]*href=['"]([^'"]+)['"][^>]*>([^<]+)<\/a>/
-    m.each { list << [uri: it[1], title: it[2]] }
-    list
+    return result
 }
 
 // 🔥 استخراج ID کانکتورها از HTML
@@ -215,207 +430,153 @@ def extractConnectedNodeIdsFromText(node) {
     return connectedIds
 }
 
-// 🔥 حذف مستقیم کانکتور از HTML
+// 🔥 حذف مستقیم کانکتور از HTML - با بررسی ایمنی
 def removeConnectorFromHTML(nodeText, sourceId) {
-    if (!nodeText?.contains("<body>")) return nodeText
+    if (!nodeText || !nodeText.contains("<body>")) return nodeText
     
-    def s = nodeText.indexOf("<body>") + 6
-    def e = nodeText.indexOf("</body>")
-    if (s <= 5 || e <= s) return nodeText
-    
-    def htmlContent = nodeText.substring(s, e)
-    
-    def pattern = /<div[^>]*>[\s\n]*[↙↗↔]️?[\s\n]*<a\s+[^>]*data-link-type=['"]connector['"][^>]*href=['"]#${sourceId}['"][^>]*>.*?<\/a>[\s\n]*<\/div>/ 
-    def cleanedHtml = htmlContent.replaceAll(pattern, "")
-    
-    return nodeText.substring(0, s) + cleanedHtml + nodeText.substring(e)
-}
-
-// 🔥 همه لینک‌ها + Markdown خالی []()
-def extractTextLinksFromNodeText(node) {
-    def freeplaneLinks = []
-    def obsidianLinks = []
-    def webLinks = []
-    def keepLines = []
-    
-    def lines = node.text.split('\n')
-    
-    lines.each { l ->
-        def trimmed = l.trim()
-        if (!trimmed) {
-            keepLines << l
-            return
+    try {
+        def s = nodeText.indexOf("<body>") + 6
+        def e = nodeText.indexOf("</body>")
+        
+        // بررسی محدوده‌های معتبر
+        if (s <= 5 || e <= s || e > nodeText.length()) {
+            return nodeText
         }
         
-        def processed = false
+        def before = nodeText.substring(0, s)
+        def htmlContent = nodeText.substring(s, e)
+        def after = nodeText.substring(e)
         
-        // URL تنها
-        if (!processed && trimmed =~ /^https?:\/\/[^\s]+$/) {
-            webLinks << [uri: trimmed, title: getSmartTitle(trimmed)]
-            processed = true
-        }
-        // Markdown [text](url)
-        else if (!processed && (trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
-            def mdMatcher = (trimmed =~ /\[([^\]]*?)\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
-            mdMatcher.each { match ->
-                def title = match[1].trim()
-                def uri = match[2].trim()
-                if (!title || title == uri) title = getSmartTitle(uri)
-                webLinks << [uri: uri, title: title]
-            }
-            processed = true
-        }
-        // 🔥 Markdown خالی []()
-        else if (!processed && (trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)) {
-            def emptyMatcher = (trimmed =~ /\[\s*\]\s*\(\s*(https?:\/\/[^\)\s]+)\s*\)/)
-            emptyMatcher.each { match ->
-                def uri = match[1].trim()
-                webLinks << [uri: uri, title: getSmartTitle(uri)]
-            }
-            processed = true
-        }
-        // URL + text
-        else if (!processed && trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/) {
-            def matcher = (trimmed =~ /(https?:\/\/[^\s]+)\s+(.+)/)
-            matcher.each { match ->
-                webLinks << [uri: match[1].trim(), title: match[2].trim()]
-            }
-            processed = true
-        }
-        // 🔥 freeplane
-        else if (!processed && trimmed.startsWith("freeplane:")) {
-            def parts = trimmed.split(' ', 2)
-            def uri = parts[0]
-            def customTitle = (parts.length > 1) ? parts[1]?.trim() : null
-            def title = customTitle ?: getTargetNodeTitle(uri)
-            freeplaneLinks << [uri: uri, title: title]
-            processed = true
-        }
-        else if (!processed && trimmed.startsWith("obsidian://")) {
-            def parts = trimmed.split(' ', 2)
-            obsidianLinks << [uri: parts[0], title: (parts.length > 1) ? parts[1]?.trim() : "ابسیدین"]
-            processed = true
-        }
-        // #ID connector - حذف
-        else if (!processed && trimmed.contains("#") && !trimmed.startsWith("freeplane:")) {
-            processed = true
-        }
+        // حذف دقیق کانکتور مورد نظر
+        def connectorPattern = /<div style=['"]margin-bottom: 3px; text-align: right['"]>[\s\n]*[↙↗↔]️?[\s\n]*<a[^>]*data-link-type=['"]connector['"][^>]*href=['"]#${sourceId}['"][^>]*>.*?<\/a>[\s\n]*<\/div>/
+        def newHtmlContent = htmlContent.replaceAll(connectorPattern, '')
         
-        if (!processed) keepLines << l
-    }
-    
-    node.text = keepLines.join('\n')
-    return freeplaneLinks + obsidianLinks + webLinks
-}
-
-def generateTextLinksHTML(textLinks) {
-    def html = []
-
-    def webLinks = textLinks.findAll { 
-        def uri = it.uri ?: ""
-        uri.startsWith("http://") || uri.startsWith("https://")
-    }
-    if (webLinks) {
-        webLinks.each { l ->
-            def titleNow = l.title ?: l.uri
-            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>🌐 " +
-                    "<a data-link-type='text' href='${l.uri ?: ""}'>" +
-                    HtmlUtils.toXMLEscapedText(titleNow) +
-                    "</a></div>"
-        }
-    }
-    
-    def freeplaneLinks = textLinks.findAll { (it.uri ?: "").startsWith("freeplane:") }
-    if (freeplaneLinks) {
-        freeplaneLinks.each { l ->
-            def titleNow = l.title ?: "لینک"
-            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>🔗 " +
-                    "<a data-link-type='text' href='${l.uri ?: ""}'>" +
-                    HtmlUtils.toXMLEscapedText(titleNow) +
-                    "</a></div>"
-        }
-    }
-    
-    def obsidianLinks = textLinks.findAll { (it.uri ?: "").startsWith("obsidian://") }
-    if (obsidianLinks) {
-        obsidianLinks.each { l ->
-            def titleNow = l.title ?: "ابسیدین"
-            html << "<div style='margin-right:0px;text-align:right;direction:rtl;'>📱 " +
-                    "<a data-link-type='text' href='${l.uri ?: ""}'>" +
-                    HtmlUtils.toXMLEscapedText(titleNow) +
-                    "</a></div>"
-        }
-    }
-    
-    html.join("")
-}
-
-def addLinksToNodeText(node, textLinks, connectors) {
-    def mainContent = extractMainContent(node)
-    def connectorsHTML = generateConnectorsHTML(connectors)
-    def textLinksHTML = generateTextLinksHTML(textLinks)
-    
-    def finalHTML = []
-    
-    if (mainContent.trim()) {
-        finalHTML << "<div style='direction:rtl;font-family:Tahoma;margin-bottom:10px;'>${HtmlUtils.toXMLEscapedText(mainContent)}</div>"
-    }
-    
-    if (textLinksHTML) {
-        finalHTML << textLinksHTML
-    }
-    
-    if (connectorsHTML) {
-        finalHTML << connectorsHTML
-    }
-    
-    if (finalHTML) {
-        node.text = "<html><body>${finalHTML.join('')}</body></html>"
-    } else {
-        node.text = mainContent
+        return before + newHtmlContent + after
+    } catch (Exception e) {
+        println "خطا در removeConnectorFromHTML: ${e.message}"
+        return nodeText
     }
 }
 
-def createBackwardTextLink(targetNode, sourceNode, sourceFreeplaneUri) {
-    def sourceTitle = getFirstLineFromText(extractMainContent(sourceNode))
-
-    def existingLinks = extractTextLinksFromNodeHTML(targetNode)
-    if (existingLinks.any { it.uri == sourceFreeplaneUri }) return
-
-    existingLinks << [uri: sourceFreeplaneUri, title: sourceTitle]
-    def targetConnectors = extractConnectedNodes(targetNode)
-    addLinksToNodeText(targetNode, existingLinks, targetConnectors)
-}
-
-def removeConnectorLinkFromNode(targetNode, sourceNode) {
+// 🔥 ساخت backward link در گره مقصد - فقط اگر وجود نداشته باشد
+def createBackwardTextLinkIfNeeded(targetNode, sourceNode, sourceFreeplaneUri) {
     def sourceId = sourceNode.id
-    def currentText = targetNode.text
-    def cleanedText = removeConnectorFromHTML(currentText, sourceId)
-    targetNode.text = cleanedText
     
-    def textLinks = extractTextLinksFromNodeHTML(targetNode)
+    // بررسی کن که آیا در گره مقصد از قبل لینکی به گره مبدا وجود دارد
+    if (hasLinkToNode(targetNode, sourceId)) {
+        // لینک از قبل وجود دارد - کاری نکن
+        return false
+    }
+    
+    // لینک وجود ندارد - بساز
+    def sourceTitle = getFirstLineFromText(extractPlainTextForProcessing(sourceNode))
+
+    // اضافه کردن backward link به انتهای متن target
+    def targetPlain = extractPlainTextForProcessing(targetNode)
+    def targetLines = targetPlain.split('\n')
+    targetLines = targetLines + ["freeplane:${sourceFreeplaneUri} ${sourceTitle}"]
+    
+    def targetHTML = processLinesToHTML(targetLines, sourceTitle, targetNode)
+    
+    // فقط کانکتورهای جدید را اضافه کن
+    def existingConnectorIds = extractConnectedNodeIdsFromText(targetNode)
     def connectors = extractConnectedNodes(targetNode)
-    addLinksToNodeText(targetNode, textLinks, connectors)
+    def connectorsHTML = generateNewConnectorsHTML(connectors, existingConnectorIds)
+    
+    def finalHTML = targetHTML.join('\n')
+    if (connectorsHTML) {
+        finalHTML += "\n" + connectorsHTML
+    }
+    
+    targetNode.text = "<html><body>${finalHTML}</body></html>"
+    return true
 }
 
+// 🔥 آپدیت همسایه‌ها - نسخه بهبود یافته
 def updateOtherSideConnectors(centerNode) {
     def connected = extractConnectedNodes(centerNode)
     connected.values().flatten().unique().each { other ->
         def proxy = asProxy(other)
         if (!proxy) return
         
-        def textLinks = extractTextLinksFromNodeHTML(proxy)
-        def connectors = extractConnectedNodes(proxy)
-        addLinksToNodeText(proxy, textLinks, connectors)
+        // محتوای اصلی را حفظ کن
+        def contentLines = extractNodeContent(proxy)
+        
+        // فقط کانکتورهای جدید بساز
+        def existingConnectorIds = extractConnectedNodeIdsFromText(proxy)
+        def connectorsHTML = generateNewConnectorsHTML(extractConnectedNodes(proxy), existingConnectorIds)
+        
+        // 🔥 KEY FIX: اگر کانکتور جدید نیست → باز هم HTML اصلی را بساز (برای حفظ کانکتورهای موجود)
+        def htmlLines = processLinesToHTML(contentLines, null, proxy)
+        
+        def finalHTML = htmlLines.join('\n')
+        
+        // 🔥 اگر کانکتورهای قبلی وجود دارند، آنها را اضافه کن
+        def currentConnectors = extractConnectedNodes(proxy)
+        def allConnectorsHTML = generateAllConnectorsHTML(currentConnectors)
+        
+        if (allConnectorsHTML) {
+            finalHTML += "\n" + allConnectorsHTML
+        }
+        
+        proxy.text = "<html><body>${finalHTML}</body></html>"
     }
 }
 
+// 🔢 تابع جدید: حذف کانکتور از همه گره‌های متصل
+def removeConnectorFromAllConnectedNodes(centerNode, targetNode) {
+    def centerId = centerNode.id
+    
+    // 🔥 1. حذف از گره هدف
+    if (targetNode) {
+        def currentText = targetNode.text
+        def cleanedText = removeConnectorFromHTML(currentText, centerId)
+        if (cleanedText != currentText) {
+            targetNode.text = cleanedText
+            // بعد از حذف، گره هدف را بازسازی کن
+            def targetContentLines = extractNodeContent(targetNode)
+            def targetHtmlLines = processLinesToHTML(targetContentLines, null, targetNode)
+            def targetConnectors = extractConnectedNodes(targetNode)
+            def targetConnectorsHTML = generateAllConnectorsHTML(targetConnectors)
+            
+            def targetFinalHTML = targetHtmlLines.join('\n')
+            if (targetConnectorsHTML) {
+                targetFinalHTML += "\n" + targetConnectorsHTML
+            }
+            targetNode.text = "<html><body>${targetFinalHTML}</body></html>"
+        }
+    }
+    
+    // 🔥 2. حذف از همه گره‌های متصل به مرکز
+    def connected = extractConnectedNodes(centerNode)
+    connected.values().flatten().unique().each { other ->
+        if (other != targetNode) {
+            def currentText = other.text
+            def cleanedText = removeConnectorFromHTML(currentText, centerId)
+            if (cleanedText != currentText) {
+                other.text = cleanedText
+                // 🔥 بازسازی گره برای حذف متن کانکتور
+                def otherContentLines = extractNodeContent(other)
+                def otherHtmlLines = processLinesToHTML(otherContentLines, null, other)
+                def otherConnectors = extractConnectedNodes(other)
+                def otherConnectorsHTML = generateAllConnectorsHTML(otherConnectors)
+                
+                def otherFinalHTML = otherHtmlLines.join('\n')
+                if (otherConnectorsHTML) {
+                    otherFinalHTML += "\n" + otherConnectorsHTML
+                }
+                other.text = "<html><body>${otherFinalHTML}</body></html>"
+            }
+        }
+    }
+}
+
+// 🔥 تابع اصلی پردازش - الگوی جدید
 def processNode() {
     def node = c.selected
     if (!node) return
 
-    def allExistingLinks = extractTextLinksFromNodeHTML(node)
-    
+    // 1. کانکتورهای قبلی را ذخیره کن
     def previousConnectorIds = extractConnectedNodeIdsFromText(node)
     def previouslyConnectedNodes = []
     previousConnectorIds.each { nodeId ->
@@ -425,27 +586,66 @@ def processNode() {
         }
     }
 
-    def newLinks = extractTextLinksFromNodeText(node)
-    def connectors = extractConnectedNodes(node)
+    // 2. محتوای واقعی گره را استخراج کن
+    def contentLines = extractNodeContent(node)
     
-    def finalTextLinks = (allExistingLinks + newLinks).unique { it.uri ?: "" }
+    // 3. خطوط را پردازش کن (فقط لینک‌های جدید HTML می‌شوند)
+    def processedLines = processLinesToHTML(contentLines, null, node)
+    
+    // 4. همه کانکتورهای فعلی را بساز
+    def connectors = extractConnectedNodes(node)
+    def connectorsHTML = generateAllConnectorsHTML(connectors)
+    
+    // 5. متن‌ها و لینک‌ها را ترکیب کن
+    def finalContent = []
+    
+    processedLines.each { line ->
+        // اگر خط از قبل HTML است (لینک) یا متن ساده است
+        if (line.startsWith('<')) {
+            finalContent << line
+        } else {
+            // متن ساده - مستقیماً در body قرار می‌گیرد
+            finalContent << line
+        }
+    }
+    
+    // 6. کانکتورها را اضافه کن (اگر وجود دارند)
+    def finalHTML = finalContent.join('\n')
+    if (connectorsHTML) {
+        if (finalHTML) {
+            finalHTML += "\n" + connectorsHTML
+        } else {
+            finalHTML = connectorsHTML
+        }
+    }
+    
+    node.text = "<html><body>${finalHTML}</body></html>"
 
-    addLinksToNodeText(node, finalTextLinks, connectors)
+    // 7. دوطرفه: برای هر freeplane link، backward link بساز
+    def plainText = extractPlainTextForProcessing(node)
+    def freeplaneUris = []
+    plainText.split('\n').each { line ->
+        def trimmed = line.trim()
+        if (trimmed.startsWith("freeplane:") || trimmed.contains("#")) {
+            def parts = trimmed.split(' ', 2)
+            freeplaneUris << parts[0]
+        }
+    }
 
-    // 🔥 Two-way
-    finalTextLinks.each { link ->
-        def uri = link.uri ?: ""
-        if (uri.startsWith("freeplane:") && uri.contains("#")) {
+    freeplaneUris.each { uri ->
+        if (uri.contains("#")) {
             def targetId = uri.substring(uri.lastIndexOf('#') + 1)
             def targetNode = c.find { it.id == targetId }.find()
             if (targetNode && targetNode != node) {
-                createBackwardTextLink(targetNode, node, uri)
+                createBackwardTextLinkIfNeeded(targetNode, node, uri)
             }
         }
     }
 
+    // 8. آپدیت همسایه‌ها
     updateOtherSideConnectors(node)
     
+    // 9. حذف کانکتورهای حذف شده
     def currentConnected = []
     currentConnected.addAll(connectors['ورودی'] ?: [])
     currentConnected.addAll(connectors['خروجی'] ?: [])
@@ -453,7 +653,7 @@ def processNode() {
     
     def removedConnections = previouslyConnectedNodes.findAll { !currentConnected.contains(it) }
     removedConnections.each { oldConnectedNode ->
-        removeConnectorLinkFromNode(oldConnectedNode, node)
+        removeConnectorFromAllConnectedNodes(node, oldConnectedNode)
     }
 }
 
@@ -463,7 +663,7 @@ try {
     if (!node) return
     
     processNode()
-    ui.showMessage("✅ v6.3.10 FINAL - Markdown []() + Smart Title ✅", 1)
+    ui.showMessage("✅ v7.6.2 FIXED - حفظ کامل لینک‌های HTML ✅", 1)
 } catch (e) {
     ui.showMessage("خطا:\n${e.message}", 0)
 }
