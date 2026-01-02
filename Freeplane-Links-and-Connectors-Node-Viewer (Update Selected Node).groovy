@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - v8.8.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅
+// aaa1386 - v8.9.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -99,46 +99,44 @@ def extractNodeContent(node) {
             if (s > 5 && e > s) {
                 def htmlContent = text.substring(s, e)
                 
-                // 🔥 KEY FIX: خطوط HTML را جداگانه پردازش کن
-                def lines = htmlContent.split('\n')
+                // 🔥 KEY FIX: تشخیص لینک‌های HTML موجود
+                // الگوی regex برای تشخیص لینک‌های HTML کامل
+                def linkPattern = /<div[^>]*>\s*[🌐📱🔗↔↗🔙][^<]*<a[^>]*data-link-type=['"]text['"][^>]*>[^<]*<\/a>\s*<\/div>/
                 
-                lines.each { line ->
+                // استخراج همه لینک‌های HTML
+                def matcher = (htmlContent =~ /(?s)${linkPattern}/)
+                def links = []
+                matcher.each { link ->
+                    links << link.trim()
+                }
+                
+                // حذف لینک‌ها از htmlContent برای پردازش بقیه متن
+                def remainingContent = htmlContent.replaceAll(/(?s)${linkPattern}/, '')
+                
+                // پردازش باقی مانده متن
+                remainingContent.split('\n').each { line ->
                     def trimmed = line.trim()
-                    if (!trimmed) return
-                    
-                    // 🔥 اگر خط یک لینک HTML کامل است (با آیکن و تگ <a>)
-                    if (trimmed.matches(/.*<div[^>]*>\s*[🌐📱🔗↔↗🔙].*<a[^>]*data-link-type=['"]text['"][^>]*>.*?<\/a>\s*<\/div>.*/)) {
-                        // لینک HTML رو مستقیماً به نتیجه اضافه کن
+                    if (trimmed && 
+                        !trimmed.startsWith("//") && 
+                        !trimmed.startsWith("@ExecutionModes") &&
+                        !trimmed.startsWith("import ") &&
+                        !trimmed.startsWith("def ") &&
+                        !trimmed.startsWith("try {") &&
+                        !trimmed.startsWith("catch ") &&
+                        !trimmed.matches(/^(?:[↗↔]️?|\| 🔙)\s*.+$/)) {
                         result << trimmed
                     }
-                    // 🔥 اگر فقط لینک <a> است (بدون div)
-                    else if (trimmed.matches(/.*[🌐📱🔗↔↗🔙].*<a[^>]*data-link-type=['"]text['"][^>]*>.*?<\/a>.*/)) {
-                        result << trimmed
-                    }
-                    // اگر متن ساده است
-                    else {
-                        // تگ‌ها رو حذف کن تا متن ساده بدست بیاد
-                        def plainText = trimmed
-                            .replaceAll(/<[^>]+>/, '')
-                            .replaceAll(/&nbsp;/, ' ')
-                            .trim()
-                        
-                        if (plainText && 
-                            !plainText.startsWith("//") && 
-                            !plainText.startsWith("@ExecutionModes") &&
-                            !plainText.startsWith("import ") &&
-                            !plainText.startsWith("def ") &&
-                            !plainText.startsWith("try {") &&
-                            !plainText.startsWith("catch ") &&
-                            !plainText.matches(/^(?:[↗↔]️?|\| 🔙)\s*.+$/)) {
-                            result << plainText
-                        }
-                    }
+                }
+                
+                // اضافه کردن لینک‌های HTML حفظ شده
+                links.each { link ->
+                    result << link
                 }
             }
         } catch (Exception ex) {
             println "خطا در extractNodeContent: ${ex.message}"
-            def cleanText = text.replaceAll(/<[^>]+>/, '').trim()
+            // اگر خطا رخ داد، کل متن را به صورت ساده برگردان
+            def cleanText = text.replaceAll(/<[^>]+>/, '').replaceAll(/&[a-z]+;/, '').trim()
             return cleanText ? [cleanText] : []
         }
     } else {
@@ -325,6 +323,15 @@ def generateNewConnectorsHTML(grouped, existingIds = []) {
     html.join("")
 }
 
+// 🔥 تابع کمکی: بررسی آیا خط از قبل HTML معتبر است
+def isValidHtmlLink(line) {
+    if (!line) return false
+    
+    // بررسی ساختار کلی
+    def pattern = /<div[^>]*>\s*([🌐📱🔗↔↗🔙]+\s*)?<a\s+[^>]*href=['"][^'"]+['"][^>]*>[^<]*<\/a>\s*<\/div>/
+    return line.matches(/(?s).*${pattern}.*/)
+}
+
 // 🔥 پردازش خطوط با منطق صحیح - از کد الگو
 def processLinesToHTML(lines, backwardTitle, currentNode, mode = "One-way") {
     def result = []
@@ -333,14 +340,18 @@ def processLinesToHTML(lines, backwardTitle, currentNode, mode = "One-way") {
         def trimmed = line.trim()
         if (!trimmed) return
         
-        // 🔥 اگر خط از قبل یک لینک HTML کامل است، تغییرش نده
-        if (trimmed.startsWith('<div') && trimmed.contains('data-link-type="text"')) {
-            result << trimmed
-            return
+        // 🔥 KEY FIX: اگر خط از قبل یک لینک HTML کامل است (با div wrapper)، تغییرش نده
+        if (trimmed.startsWith('<div') && trimmed.contains('data-link-type="text"') && trimmed.endsWith('</div>')) {
+            // بررسی کن که آیا لینک معتبر است
+            if (trimmed.contains('href=') && trimmed.contains('</a>')) {
+                result << trimmed
+                return
+            }
         }
         
         // 🔥 اگر خط فقط لینک <a> است (بدون div wrapper)
-        if (trimmed.startsWith('🌐 <a') || trimmed.startsWith('📱 <a') || trimmed.startsWith('🔗 <a')) {
+        if (trimmed.startsWith('🌐 <a') || trimmed.startsWith('📱 <a') || trimmed.startsWith('🔗 <a') || 
+            trimmed.startsWith('🔗↗️ <a') || trimmed.startsWith('🔗↔️ <a') || trimmed.startsWith('🔗🔙 <a')) {
             // به صورت div-wrap شده برگردون
             result << "<div style='margin-bottom: 3px; text-align: right'>${trimmed}</div>"
             return
@@ -413,8 +424,11 @@ def processLinesToHTML(lines, backwardTitle, currentNode, mode = "One-way") {
         // متن عادی (نه لینک)
         else {
             // 🔥 فقط متن ساده (با escaping)
-            if (!trimmed.matches(/^(?:[↗↔]️?|\| 🔙)\s*.+$/)) {
+            if (!trimmed.matches(/^(?:[↗↔]️?|\| 🔙)\s*.+$/) && !trimmed.startsWith("<")) {
                 result << HtmlUtils.toXMLEscapedText(trimmed)
+            } else if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
+                // اگر از قبل HTML است، بدون تغییر بگذار
+                result << trimmed
             }
         }
     }
@@ -751,7 +765,7 @@ try {
     }
     
     processNode(mode)
-    ui.showMessage("✅ v8.8.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅", 1)
+    ui.showMessage("✅ v8.9.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅", 1)
 } catch (e) {
     println "❌ خطا: ${e.message}"
     e.printStackTrace()
