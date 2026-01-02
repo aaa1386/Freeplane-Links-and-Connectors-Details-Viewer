@@ -1,5 +1,5 @@
 // @ExecutionModes({ON_SINGLE_NODE="/menu_bar/link"})
-// aaa1386 - v8.9.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅
+// aaa1386 - v8.9.1 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML + به‌روزرسانی خودکار عنوان لینک‌ها ✅
 
 import org.freeplane.core.util.HtmlUtils
 import javax.swing.*
@@ -644,6 +644,174 @@ def extractFreeplaneLinksFromContent(contentLines) {
     return freeplaneUris
 }
 
+// 🔥 تابع جدید: به‌روزرسانی عنوان لینک‌های Freeplane و Connector در کل نقشه
+def updateAllLinkTitlesInMap() {
+    println "🔄 شروع به‌روزرسانی عنوان لینک‌ها در کل نقشه"
+    
+    // تابع کمکی برای استخراج لینک‌ها از HTML
+    def extractLinksFromHTML = { html ->
+        def freeplaneLinks = []
+        def connectorLinks = []
+        
+        // الگوی لینک Freeplane (شامل freeplane: و #)
+        def freeplanePattern = /<a\s+[^>]*href=['"](freeplane:[^'"]*|#[^'"]*)['"][^>]*>([^<]*)<\/a>/
+        def freeplaneMatcher = (html =~ freeplanePattern)
+        freeplaneMatcher.each { match ->
+            def uri = match[1]
+            def title = match[2]
+            freeplaneLinks << [uri: uri, title: title]
+        }
+        
+        // الگوی لینک Connector
+        def connectorPattern = /<a\s+[^>]*data-link-type=['"]connector['"][^>]*href=['"]#([^'"]*)['"][^>]*>([^<]*)<\/a>/
+        def connectorMatcher = (html =~ connectorPattern)
+        connectorMatcher.each { match ->
+            def uri = "#" + match[1]
+            def title = match[2]
+            connectorLinks << [uri: uri, title: title]
+        }
+        
+        return [freeplaneLinks, connectorLinks]
+    }
+    
+    // تابع کمکی برای به‌روزرسانی لینک در HTML
+    def updateLinkInHTML = { html, uri, oldTitle, newTitle ->
+        // اگر عنوان قدیمی با "@" شروع شود، به‌روز نمی‌کنیم
+        if (oldTitle.startsWith('@')) {
+            return html
+        }
+        
+        // escape کردن کاراکترهای خاص در regex برای uri و oldTitle
+        def escapedUri = java.util.regex.Pattern.quote(uri)
+        def escapedOldTitle = java.util.regex.Pattern.quote(oldTitle)
+        
+        // الگو برای لینک Freeplane
+        def pattern = /<a\s+([^>]*href=['"]${escapedUri}['"][^>]*)>${escapedOldTitle}<\/a>/
+        
+        // جایگزینی
+        def newHtml = html.replaceAll(pattern, "<a \$1>${newTitle}</a>")
+        
+        return newHtml
+    }
+    
+    // همه گره‌های نقشه
+    def allNodes = c.find { true }.toList()
+    
+    allNodes.each { n ->
+        def node = asProxy(n)
+        if (!node) return
+        
+        // بررسی node.text (اگر HTML است)
+        def text = node.text ?: ""
+        if (text.contains("<body>")) {
+            def (freeplaneLinks, connectorLinks) = extractLinksFromHTML(text)
+            
+            // پردازش لینک‌های Freeplane
+            freeplaneLinks.each { link ->
+                def uri = link.uri
+                def oldTitle = link.title
+                
+                // استخراج targetId از uri
+                def targetId = null
+                if (uri.startsWith("#")) {
+                    targetId = uri.substring(1)
+                } else if (uri.startsWith("freeplane:")) {
+                    // فرض می‌کنیم freeplane:#ID
+                    def hashIndex = uri.lastIndexOf('#')
+                    if (hashIndex != -1) {
+                        targetId = uri.substring(hashIndex + 1)
+                    }
+                }
+                
+                if (targetId) {
+                    def targetNode = c.find { it.id == targetId }.find()
+                    if (targetNode) {
+                        def targetTitle = getFirstLineFromText(extractPlainTextForProcessing(targetNode))
+                        if (oldTitle != targetTitle) {
+                            // به‌روزرسانی عنوان در HTML
+                            text = updateLinkInHTML(text, uri, oldTitle, targetTitle)
+                            println "✅ به‌روزرسانی عنوان لینک Freeplane در متن گره ${node.id}: ${oldTitle} -> ${targetTitle}"
+                        }
+                    }
+                }
+            }
+            
+            // پردازش لینک‌های Connector
+            connectorLinks.each { link ->
+                def uri = link.uri // با # شروع می‌شود
+                def oldTitle = link.title
+                
+                def targetId = uri.substring(1)
+                def targetNode = c.find { it.id == targetId }.find()
+                if (targetNode) {
+                    def targetTitle = getFirstLineFromText(extractPlainTextForProcessing(targetNode))
+                    if (oldTitle != targetTitle) {
+                        text = updateLinkInHTML(text, uri, oldTitle, targetTitle)
+                        println "✅ به‌روزرسانی عنوان لینک Connector در متن گره ${node.id}: ${oldTitle} -> ${targetTitle}"
+                    }
+                }
+            }
+            
+            // ذخیره تغییرات در node.text
+            node.text = text
+        }
+        
+        // بررسی node.details (اگر وجود دارد)
+        def details = node.detailsText ?: ""
+        if (details.contains("<body>")) {
+            def (freeplaneLinks, connectorLinks) = extractLinksFromHTML(details)
+            
+            freeplaneLinks.each { link ->
+                def uri = link.uri
+                def oldTitle = link.title
+                
+                def targetId = null
+                if (uri.startsWith("#")) {
+                    targetId = uri.substring(1)
+                } else if (uri.startsWith("freeplane:")) {
+                    def hashIndex = uri.lastIndexOf('#')
+                    if (hashIndex != -1) {
+                        targetId = uri.substring(hashIndex + 1)
+                    }
+                }
+                
+                if (targetId) {
+                    def targetNode = c.find { it.id == targetId }.find()
+                    if (targetNode) {
+                        def targetTitle = getFirstLineFromText(extractPlainTextForProcessing(targetNode))
+                        if (oldTitle != targetTitle) {
+                            details = updateLinkInHTML(details, uri, oldTitle, targetTitle)
+                            println "✅ به‌روزرسانی عنوان لینک Freeplane در جزئیات گره ${node.id}: ${oldTitle} -> ${targetTitle}"
+                        }
+                    }
+                }
+            }
+            
+            connectorLinks.each { link ->
+                def uri = link.uri
+                def oldTitle = link.title
+                
+                def targetId = uri.substring(1)
+                def targetNode = c.find { it.id == targetId }.find()
+                if (targetNode) {
+                    def targetTitle = getFirstLineFromText(extractPlainTextForProcessing(targetNode))
+                    if (oldTitle != targetTitle) {
+                        details = updateLinkInHTML(details, uri, oldTitle, targetTitle)
+                        println "✅ به‌روزرسانی عنوان لینک Connector در جزئیات گره ${node.id}: ${oldTitle} -> ${targetTitle}"
+                    }
+                }
+            }
+            
+            // ذخیره تغییرات در node.details
+            if (details != node.detailsText) {
+                node.details = details
+            }
+        }
+    }
+    
+    println "✅ به‌روزرسانی عنوان لینک‌ها در کل نقشه کامل شد"
+}
+
 // 🔥 تابع اصلی پردازش - نسخه اصلاح شده
 def processNode(mode) {
     def node = c.selected
@@ -737,6 +905,9 @@ def processNode(mode) {
     removedConnections.each { oldConnectedNode ->
         removeConnectorFromAllConnectedNodes(node, oldConnectedNode, mode)
     }
+    
+    // 🔥 11. به‌روزرسانی عنوان لینک‌ها در کل نقشه
+    updateAllLinkTitlesInMap()
 }
 
 // ================= اجرا =================
@@ -765,7 +936,7 @@ try {
     }
     
     processNode(mode)
-    ui.showMessage("✅ v8.9.0 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML ✅", 1)
+    ui.showMessage("✅ v8.9.1 FIXED - حفظ لینک‌های HTML + تبدیل لینک‌های متنی به HTML + به‌روزرسانی خودکار عنوان لینک‌ها ✅", 1)
 } catch (e) {
     println "❌ خطا: ${e.message}"
     e.printStackTrace()
